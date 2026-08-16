@@ -230,6 +230,16 @@ test("team goals and assists are separate flat events", () => {
   assert.equal(state.field.forward_striker, "p2");
 });
 
+test("goal attempts for both teams are logged without changing the score", () => {
+  const ourAttempt = event(4, "goal_attempt", 120_000, { team: "for" });
+  const opponentAttempt = event(5, "goal_attempt", 125_000, { team: "against" });
+  const attempts = [ourAttempt, opponentAttempt];
+  const state = new LineupProjector().project([...base, ...attempts], 125_000);
+  assert.equal(state.scoreFor, 0);
+  assert.equal(state.scoreAgainst, 0);
+  assert.deepEqual(activeTimeline([...base, ...attempts]).slice(-2).map(item => item.payload.team), ["for", "against"]);
+});
+
 test("deleting a goal recalculates the score while deleting an assist does not", () => {
   const goal = event(4, "goal_for", 120_000, { playerId: "p2" });
   const assist = event(5, "assist_for", 120_000, { playerId: "p1" });

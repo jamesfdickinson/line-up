@@ -84,7 +84,9 @@ function bindStaticEvents() {
   $("#clock-button").addEventListener("click", openClockAdjust);
   $("#match-control").addEventListener("click", toggleClock);
   $("#score-for-button").onclick = event => { event.preventDefault(); event.stopPropagation(); openGoalFor(); };
+  $("#goal-attempt-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_attempt", { team: "for" }).catch(showActionError); };
   $("#score-against-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_against").catch(showActionError); };
+  $("#opponent-goal-attempt-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_attempt", { team: "against" }).catch(showActionError); };
   $("#clear-field").addEventListener("click", clearField);
   $("#layout-button").addEventListener("click", openLayoutPicker);
   $("#more-actions").addEventListener("click", openMoreActions);
@@ -636,9 +638,9 @@ function openClockAdjust() {
 
 function startClock() { clock.start(); renderAt(clock.elapsedMs); }
 
-async function recordSimple(type) {
+async function recordSimple(type, payload = {}) {
   if (state.completed) return;
-  await append(type);
+  await append(type, clock?.elapsedMs || 0, payload);
 }
 
 function openGoalFor(preselectedPlayerId = "") {
@@ -820,7 +822,7 @@ function openTimelineDelete(eventId) {
   });
 }
 
-const MANUAL_TIMELINE_TYPES = ["goal_for", "assist_for", "goal_against", "player_moved", "clock_adjusted", "note_added"];
+const MANUAL_TIMELINE_TYPES = ["goal_for", "assist_for", "goal_against", "goal_attempt", "player_moved", "clock_adjusted", "note_added"];
 
 function openTimelineEdit(eventId) {
   const event = activeTimeline(events).find(item => item.eventId === eventId);
@@ -856,6 +858,7 @@ function timelineEventFields(type, event, playerIds) {
   if (type === "goal_for") return playerSelect("playerId", p.playerId, "Player name", true);
   if (type === "assist_for") return playerSelect("playerId", p.playerId, "Player name");
   if (type === "goal_against") return "";
+  if (type === "goal_attempt") return `<label>Team<select name="attemptTeam"><option value="for" ${p.team !== "against" ? "selected" : ""}>${escapeHtml(state.config.team)}</option><option value="against" ${p.team === "against" ? "selected" : ""}>${escapeHtml(state.config.opponent)}</option></select></label>`;
   if (type === "clock_adjusted") return `<label>Displayed game time (MM:SS)<input name="displayTime" inputmode="numeric" value="${formatClock(p.displayTimeMs ?? event?.gameTimeMs ?? 0)}" required></label>`;
   if (type === "player_moved") {
     const playerId = move.playerId || selectedPlayer;
@@ -872,6 +875,7 @@ function timelineEventPayload(type, data, existing) {
   if (type === "goal_for") { const playerId = data.get("playerId") || null; return playerId ? { playerId } : {}; }
   if (type === "assist_for") return { playerId: requirePlayer("playerId") };
   if (type === "goal_against") return {};
+  if (type === "goal_attempt") return { team: data.get("attemptTeam") === "against" ? "against" : "for" };
   if (type === "clock_adjusted") { const displayTimeMs = parseClock(data.get("displayTime")); if (displayTimeMs === null) throw new Error("Enter displayed time as minutes:seconds."); return { displayTimeMs }; }
   if (type === "player_moved") return { moves: [{ playerId: requirePlayer("playerId"), from: data.get("from") || "off_field", to: data.get("to") }] };
   if (type === "note_added") { const note = String(data.get("note") || "").trim(); if (!note) throw new Error("Enter note details."); return { category: data.get("category"), note }; }
@@ -946,7 +950,7 @@ function playerOptions(ids, selected) { const ordered = selected && ids.includes
 function optionList(values, selected) { return values.map(value => `<option ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join(""); }
 function moveDestinationName(value) { return ({ off_field: "Off field", not_here: "Not here" })[value] || positionName(value); }
 function moveDestinationOptions(selected) { const positions = [...activePositions(), ...(!["off_field", "not_here"].includes(selected) && !activePositions().includes(selected) ? [selected] : [])]; return ["off_field", "not_here", ...positions].map(value => `<option value="${escapeHtml(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(moveDestinationName(value))}</option>`).join(""); }
-function eventTypeName(type) { return ({ goal_for: "Goal for", assist_for: "Assist for", goal_against: "Goal against", player_moved: "Player moved", note_added: "Note", clock_adjusted: "Game time changed", clock_paused: "Clock stopped", clock_resumed: "Clock started", period_started: "Half started", period_ended: "Half time", match_completed: "Game ended" })[type] || type.replaceAll("_", " "); }
+function eventTypeName(type) { return ({ goal_for: "Goal for", assist_for: "Assist for", goal_against: "Goal against", goal_attempt: "Goal attempt", player_moved: "Player moved", note_added: "Note", clock_adjusted: "Game time changed", clock_paused: "Clock stopped", clock_resumed: "Clock started", period_started: "Half started", period_ended: "Half time", match_completed: "Game ended" })[type] || type.replaceAll("_", " "); }
 function eventTypeOptions(types, selected) { return types.map(type => `<option value="${type}" ${type === selected ? "selected" : ""}>${escapeHtml(eventTypeName(type))}</option>`).join(""); }
 function formatClock(ms) { const total = Math.floor(ms / 1000); return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`; }
 function formatMinutes(ms) { return `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`; }
@@ -1009,7 +1013,7 @@ function eventLabel(event) {
     const moves = payload.moves || [];
     return moves.length === 1 ? `${nameOf(moves[0].playerId)} moved to ${moveDestinationName(moves[0].to)}` : `${moves.length} players moved`;
   }
-  return ({ match_created: "Match created", starting_lineup_confirmed: "Field started empty", layout_changed: `Layout changed to ${payload.name}`, period_started: `Period ${payload.period} started`, clock_paused: "Clock paused", clock_resumed: "Clock resumed", clock_adjusted: `Game time set to ${formatClock(payload.displayTimeMs)}`, period_ended: `Period ${payload.period} ended`, player_added: payload.player?.playerId ? `${nameOf(payload.player.playerId)} added` : "Player added", player_removed: `${nameOf(payload.playerId)} deleted`, goal_for: payload.playerId ? `Goal by ${nameOf(payload.playerId)}` : "Goal for", assist_for: `Assist by ${nameOf(payload.playerId)}`, goal_against: "Goal against", note_added: payload.category || "Note", match_completed: "Match completed", event_retracted: "Event undone", event_replaced: "Event corrected" })[event.type] || event.type;
+  return ({ match_created: "Match created", starting_lineup_confirmed: "Field started empty", layout_changed: `Layout changed to ${payload.name}`, period_started: `Period ${payload.period} started`, clock_paused: "Clock paused", clock_resumed: "Clock resumed", clock_adjusted: `Game time set to ${formatClock(payload.displayTimeMs)}`, period_ended: `Period ${payload.period} ended`, player_added: payload.player?.playerId ? `${nameOf(payload.player.playerId)} added` : "Player added", player_removed: `${nameOf(payload.playerId)} deleted`, goal_for: payload.playerId ? `Goal by ${nameOf(payload.playerId)}` : "Goal for", assist_for: `Assist by ${nameOf(payload.playerId)}`, goal_against: "Goal against", goal_attempt: payload.team === "against" ? "Opponent goal attempt" : "Our goal attempt", note_added: payload.category || "Note", match_completed: "Match completed", event_retracted: "Event undone", event_replaced: "Event corrected" })[event.type] || event.type;
 }
 function eventDetail(event) {
   const p = event.payload || {};

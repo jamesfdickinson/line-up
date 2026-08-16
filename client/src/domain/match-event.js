@@ -4,7 +4,7 @@ const EVENT_TYPES = new Set([
   "match_created", "starting_lineup_confirmed", "period_started",
   "clock_paused", "clock_resumed", "clock_adjusted", "period_ended",
   "player_added", "player_removed", "player_moved", "layout_changed",
-  "goal_for", "assist_for", "goal_against", "note_added", "match_completed",
+  "goal_for", "assist_for", "goal_against", "goal_attempt", "note_added", "match_completed",
   "event_retracted", "event_replaced"
 ]);
 

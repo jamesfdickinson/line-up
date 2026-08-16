@@ -20,6 +20,13 @@ More insight without more stat keeping.
 
 Do not ask the coach to become a statistician. Let coaching create the statistics.
 
+Strong onboarding language:
+You coach. LineupJD collects.
+
+No stat keeper required.
+
+If you tracked the lineup and score, you tracked everything LineupJD needs.
+
 ## Insight without detailed stat keeping
 
 LineupJD can begin answering valuable questions **without asking someone to track every pass, tackle, shot, or touch**. The coach simply uses the live clipboard to manage the game, and LineupJD turns those normal actions into structured data.
@@ -45,6 +52,12 @@ Suggested messages:
 > **High-level input. High-level output. Hidden insight in between.**
 
 > **Run the game. Build the data. Discover what works.**
+
+
+
+The absence of those, asssit, coner, atempts on goal statistics can be a deliberate feature:
+LineupJD does not require you to track every action.
+
 
 ## Coach-controllable intelligence
 
