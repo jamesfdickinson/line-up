@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#c9ff5b">
+  <title>CoachJD</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="."><span class="brand-mark">JD</span><span>CoachJD</span></a>
+    <span id="save-status" class="save-status" aria-live="polite">Offline ready</span>
+    <nav class="match-topbar" aria-label="Match navigation">
+      <button id="match-back" class="topbar-button topbar-back" type="button" aria-label="Back to team"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
+      <strong id="match-topbar-team" class="match-topbar-team">TEAM</strong>
+      <button id="more-actions" class="topbar-button topbar-menu" type="button" aria-label="More actions">•••</button>
+    </nav>
+  </header>
+
+  <main id="app">
+    <section id="setup-view" class="view team-page">
+      <div class="team-hero">
+        <div><div class="eyebrow">Team</div><input id="team-name-input" class="team-name-input" value="Team1" aria-label="Team name"></div>
+        <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams ▾</button><button id="season-analysis" class="secondary">Season analysis →</button></div>
+      </div>
+      <section id="no-team-panel" class="no-team-panel hidden"><h2>No teams yet</h2><p class="hint">Add a team to create players and matches.</p><button id="add-first-team" class="primary">+ Add team</button></section>
+      <section id="team-dashboard">
+        <div class="team-grid">
+          <div class="matches-column">
+            <div class="new-match-card">
+              <div><div class="eyebrow">Next match</div><input id="new-opponent" placeholder="Opponent" aria-label="Opponent"></div>
+              <label>Format<select id="team-format"><option value="5">5v5</option><option value="7" selected>7v7</option><option value="9">9v9</option><option value="11">11v11</option></select></label>
+              <button id="create-new-match" class="primary">＋ New match</button>
+            </div>
+            <div class="section-heading"><div><span class="team-icon">◷</span><h2>Matches</h2></div></div>
+            <div id="team-matches" class="match-list"></div>
+          </div>
+        </div>
+      </section>
+      <section id="season-analysis-panel" class="hidden">
+        <div class="panel-head"><div><div class="eyebrow">Team</div><h2>Season analysis</h2></div><button id="back-to-team" class="secondary">← Team</button></div>
+        <div id="season-summary" class="season-summary"></div>
+      </section>
+    </section>
+
+    <section id="match-view" class="view hidden">
+      <nav class="tabs" aria-label="Match views" role="tablist">
+        <button class="tab active" data-view="live" role="tab" aria-controls="live-panel" aria-selected="true">Field</button>
+        <button class="tab" data-view="timeline" role="tab" aria-controls="timeline-panel" aria-selected="false">Timeline</button>
+        <button class="tab" data-view="report" role="tab" aria-controls="report-panel" aria-selected="false">Match analysis</button>
+      </nav>
+
+      <section id="field-scoreboard" class="scoreboard">
+        <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
+        <div class="score-row">
+          <div class="team-score"><span id="team-name">TEAM</span><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add our goal">+</button><strong id="score-for">0</strong></div>
+          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><small id="period-label">Before kickoff</small><div class="clock-actions"><button id="match-control" class="match-control primary" type="button">Start</button></div></div>
+          <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add opponent goal">+</button><span id="opponent-name">OPPONENT</span></div>
+        </div>
+      </section>
+
+      <section id="compact-scoreboard" class="compact-scoreboard hidden" aria-label="Current score and match time">
+        <span id="compact-team-name">TEAM</span>
+        <strong><span id="compact-score-for">0</span><span class="compact-score-separator">–</span><span id="compact-score-against">0</span></strong>
+        <span id="compact-opponent-name">OPPONENT</span>
+        <time id="compact-clock">00:00</time>
+      </section>
+
+      <section id="live-panel" class="tab-panel">
+        <div class="live-layout">
+          <section class="field-section">
+            <div class="pitch-wrap"><div id="field" class="field"></div><button id="layout-button" class="layout-button" type="button">Layout</button><span id="field-count" class="field-count-overlay"></span></div>
+          </section>
+          <aside>
+            <div class="section-heading"><div><span class="status-dot off"></span><h2>Off field</h2></div><div class="off-field-actions"><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
+            <div id="bench" class="bench"></div>
+          </aside>
+        </div>
+        <div id="undo-toast" class="undo-toast hidden" role="status"><span id="undo-label">Event saved</span><button id="undo">Undo</button></div>
+      </section>
+
+      <section id="timeline-panel" class="tab-panel hidden">
+        <div class="panel-head"><div><div class="eyebrow">Source of truth</div><h2>Match timeline</h2></div><button id="add-note" class="secondary">+ Add event</button></div>
+        <div id="timeline" class="timeline"></div>
+      </section>
+
+      <section id="report-panel" class="tab-panel hidden">
+        <div class="panel-head"><div><div class="eyebrow">Match</div><h2>Match analysis</h2></div><div class="report-actions"><button id="export-json" class="secondary">JSON</button><button id="export-csv" class="secondary">CSV</button></div></div>
+        <h2>Goals</h2><div id="goal-lineups" class="goal-lineups"></div>
+        <h2>Playing time</h2>
+        <div id="minutes-report" class="minutes-report"></div>
+        <h2>Lineup stints</h2><div id="stints-report" class="stints-report"></div>
+      </section>
+    </section>
+  </main>
+
+  <dialog id="action-dialog"><form method="dialog" id="action-form"><div class="dialog-head"><h2 id="dialog-title">Action</h2><button type="button" value="cancel" formnovalidate class="close" aria-label="Close">×</button></div><div id="dialog-body"></div><p id="dialog-error" class="error"></p><div class="dialog-actions"><button type="button" value="cancel" formnovalidate class="secondary">Cancel</button><button id="dialog-confirm" value="default" class="primary">Confirm</button></div></form></dialog>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>

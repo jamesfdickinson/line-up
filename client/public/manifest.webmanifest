@@ -1,0 +1,9 @@
+{
+  "name": "CoachJD Live Soccer Tracker",
+  "short_name": "CoachJD",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#07130f",
+  "theme_color": "#c9ff5b",
+  "description": "Offline-first soccer playing-time tracker"
+}
