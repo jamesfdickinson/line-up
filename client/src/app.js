@@ -277,10 +277,12 @@ function restoreMatch() {
 }
 
 function showMatch() {
+  window.scrollTo(0, 0);
   document.body.classList.add("match-open");
   $("#setup-view").classList.add("hidden");
   $("#match-view").classList.remove("hidden", "draft-match");
   switchTab("live");
+  requestAnimationFrame(() => window.scrollTo(0, 0));
 }
 
 async function append(type, gameTimeMs = clock?.elapsedMs || 0, payload = {}, notify = true, timeSource = "automatic") {
@@ -357,7 +359,7 @@ function renderField() {
     const column = positionColumn(position, rowLength, index);
     if (!id) return `<div class="empty-field-slot ${position === "gk" ? "keeper-slot" : ""}" style="grid-column:${column}" data-position="${escapeHtml(position)}"><span>＋</span><small>${escapeHtml(shortPosition(position))}</small></div>`;
     const p = state.players[id];
-    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(p.name)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(p.name))}</span><span class="player-time">${formatMinutes(p.currentStintMs)}</span></article>`;
+    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(p.name)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(p.name))}</span><strong title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</strong><span class="player-time">${formatMinutes(p.currentStintMs)}</span></article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
   $("#field").innerHTML = bands.map(band => {
@@ -572,7 +574,8 @@ function movePointerDrag(event) {
     pointerDrag.card.classList.add("dragging");
   }
   pointerDrag.lastX = event.clientX; pointerDrag.lastY = event.clientY;
-  pointerDrag.ghost.style.transform = `translate(${event.clientX + 12}px,${event.clientY + 12}px)`;
+  pointerDrag.ghost.style.left = `${event.clientX}px`;
+  pointerDrag.ghost.style.top = `${event.clientY}px`;
 }
 
 function finishPointerDrag(event) {
