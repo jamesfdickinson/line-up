@@ -9,6 +9,7 @@ import { MatchClock } from "../src/domain/match-clock.js";
 import { matchIdsForTeam } from "../src/domain/team.js";
 import { displayedGameTime } from "../src/domain/game-time.js";
 import { mainMenuMatchStatus, STALE_PAUSE_MS } from "../src/domain/match-status.js";
+import { createId } from "../src/domain/id.js";
 
 const matchId = "match-1";
 const roster = ["Alex", "Blair", "Casey"].map((name, index) => ({ playerId: `p${index + 1}`, name, status: "available" }));
@@ -19,6 +20,13 @@ const base = [
   event(2, "starting_lineup_confirmed", 0, { assignments: [{ playerId: "p1", position: "gk" }, { playerId: "p2", position: "forward_striker" }], goalkeeperId: "p1" }),
   event(3, "period_started", 0, { period: 1 })
 ];
+
+test("creates UUIDs when randomUUID is unavailable on a LAN HTTP origin", () => {
+  const first = createId({ getRandomValues: bytes => bytes.fill(0x11) });
+  const second = createId({ getRandomValues: bytes => bytes.fill(0x22) });
+  assert.match(first, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  assert.notEqual(first, second);
+});
 
 test("a match paused for three hours appears over only in the main-menu status", () => {
   const paused = { completed: false, periodRunning: false, currentPeriod: 1 };

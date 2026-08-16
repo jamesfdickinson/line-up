@@ -1,3 +1,5 @@
+import { createId } from "./id.js";
+
 const EVENT_TYPES = new Set([
   "match_created", "starting_lineup_confirmed", "period_started",
   "clock_paused", "clock_resumed", "clock_adjusted", "period_ended",
@@ -23,7 +25,7 @@ export class MatchEvent {
 
   static create(matchId, type, gameTimeMs, payload = {}, sequence = 0, timeSource = "automatic") {
     return new MatchEvent({
-      eventId: crypto.randomUUID(), matchId, type, gameTimeMs,
+      eventId: createId(), matchId, type, gameTimeMs,
       realTimestamp: new Date().toISOString(), sequence, payload, timeSource
     });
   }

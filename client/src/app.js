@@ -7,6 +7,7 @@ import { orderedScorerGroups, playerIdFromName } from "./domain/player-label.js"
 import { matchIdsForTeam } from "./domain/team.js";
 import { displayedGameTime } from "./domain/game-time.js";
 import { mainMenuMatchStatus } from "./domain/match-status.js";
+import { createId } from "./domain/id.js";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -96,14 +97,14 @@ function bindStaticEvents() {
 }
 
 async function createInitialTeam() {
-  const initial = { teamId: crypto.randomUUID(), name: $("#team-name-input").value.trim() || "My Team", players: [] };
+  const initial = { teamId: createId(), name: $("#team-name-input").value.trim() || "My Team", players: [] };
   await store.setMeta("team", initial);
   return initial;
 }
 
 async function saveTeam() {
   if (!team) return;
-  team = { teamId: team?.teamId || crypto.randomUUID(), name: $("#team-name-input").value.trim() || "My Team", players: team?.players || [] };
+  team = { teamId: team?.teamId || createId(), name: $("#team-name-input").value.trim() || "My Team", players: team?.players || [] };
   teams = teams.map(item => item.teamId === team.teamId ? team : item);
   await persistTeams();
   setSaveStatus("Team saved");
@@ -133,7 +134,7 @@ function openAddTeam() {
     const name = String(data.get("teamName") || "").trim();
     if (!name) throw new Error("Enter a team name.");
     if (teams.some(item => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("A team with that name already exists.");
-    team = { teamId: crypto.randomUUID(), name, players: [] };
+    team = { teamId: createId(), name, players: [] };
     teams.push(team);
     await persistTeams();
     $("#season-analysis-panel").classList.add("hidden");
@@ -171,7 +172,7 @@ async function createBlankMatch() {
   if (!team) return openAddTeam();
   await saveTeam();
   const playersOnField = Number($("#team-format").value);
-  matchId = crypto.randomUUID();
+  matchId = createId();
   events = [];
   clock?.destroy();
   clock = new MatchClock({ onTick: renderAt });
@@ -933,7 +934,7 @@ function normalizeTeamPlayers(players) {
 function normalizeTeams(value) {
   return (Array.isArray(value) ? value : []).filter(item => item?.name).map(item => ({
     ...item,
-    teamId: item.teamId || crypto.randomUUID(),
+    teamId: item.teamId || createId(),
     name: String(item.name).trim(),
     players: normalizeTeamPlayers(item.players)
   })).filter(item => item.name);
