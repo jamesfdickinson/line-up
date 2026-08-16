@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { activeTimeline } from "../src/domain/match-event.js";
 import { LineupProjector } from "../src/domain/lineup-projector.js";
 import { SuggestionEngine } from "../src/domain/suggestion-engine.js";
-import { orderedScorerGroups, playerIdFromName } from "../src/domain/player-label.js";
+import { eventPlayerRecord, orderedScorerGroups, playerIdFromName } from "../src/domain/player-label.js";
 import { exportEventsCsv, exportMatchJson } from "../src/domain/exporter.js";
 import { MatchClock } from "../src/domain/match-clock.js";
 import { matchIdsForTeam } from "../src/domain/team.js";
@@ -38,6 +38,12 @@ test("a match paused for three hours appears over only in the main-menu status",
 
 test("uses the exact trimmed player name as the player ID", () => {
   assert.equal(playerIdFromName("  Alex Morgan  "), "Alex Morgan");
+});
+
+test("keeps team jersey numbers out of event player records", () => {
+  const record = eventPlayerRecord({ playerId: "Alex Morgan", name: "Alex Morgan", number: "12" });
+  assert.deepEqual(record, { playerId: "Alex Morgan", name: "Alex Morgan", status: "available", defaultPositions: [], goalkeeperEligible: true });
+  assert.equal("number" in record, false);
 });
 
 test("orders goal scorers from forwards through defenders and GK, then off field", () => {

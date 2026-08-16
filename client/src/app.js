@@ -3,7 +3,7 @@ import { MatchClock } from "./domain/match-clock.js";
 import { LineupProjector } from "./domain/lineup-projector.js";
 import { EventStore } from "./storage/event-store.js";
 import { exportMatchJson, exportEventsCsv, downloadFile } from "./domain/exporter.js";
-import { orderedScorerGroups, playerIdFromName } from "./domain/player-label.js";
+import { eventPlayerRecord, orderedScorerGroups, playerIdFromName } from "./domain/player-label.js";
 import { matchIdsForTeam } from "./domain/team.js";
 import { displayedGameTime } from "./domain/game-time.js";
 import { mainMenuMatchStatus } from "./domain/match-status.js";
@@ -180,7 +180,7 @@ async function createBlankMatch() {
     teamId: team.teamId, team: team.name, opponent: $("#new-opponent").value.trim() || "Opponent",
     date: new Date().toISOString().slice(0, 10), competition: "Season", opponentStrength: "Similar",
     periodCount: 2, periodMinutes: 25, playersOnField, maxStintMinutes: 12, restAlertMinutes: 8,
-    roster: team.players.map(player => ({ ...player, status: "available", defaultPositions: [], goalkeeperEligible: true })),
+    roster: team.players.map(eventPlayerRecord),
     expectedComplete: true, clockMode: "count_up", layoutName: FORMATIONS[playersOnField][0].name,
     positions: defaults[playersOnField]
   };
@@ -223,9 +223,14 @@ async function renderTeamDashboard() {
 }
 
 function openAddPlayer() {
-  const fields = () => `<input name="playerName" autocomplete="off" placeholder="Player name">`;
-  openDialog("Add players", `<div class="dialog-fields"><label>Player names<div id="player-name-list" class="player-name-list">${fields()}</div></label><p class="hint">Players will also be available in every future match for ${escapeHtml(team.name)}.</p></div>`, async data => {
-    const names = data.getAll("playerName").map(value => String(value).trim()).filter(Boolean);
+  const fields = () => `<div class="player-entry-row"><input name="playerName" autocomplete="off" placeholder="Player name" aria-label="Player name"><input class="player-number-input" name="playerNumber" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" placeholder="#" aria-label="Jersey number"></div>`;
+  openDialog("Add players", `<div class="dialog-fields"><label>Players<div id="player-name-list" class="player-name-list">${fields()}</div></label><p class="hint">Jersey numbers are saved with ${escapeHtml(team.name)} and are not copied into the match event log.</p></div>`, async data => {
+    const numberValues = data.getAll("playerNumber");
+    const entries = data.getAll("playerName").map((value, index) => ({
+      name: String(value).trim(),
+      number: normalizePlayerNumber(numberValues[index])
+    })).filter(entry => entry.name);
+    const names = entries.map(entry => entry.name);
     if (!names.length) throw new Error("Enter at least one player name.");
     const keys = names.map(name => name.toLocaleLowerCase());
     if (new Set(keys).size !== keys.length) throw new Error("Each player name can only be added once.");
@@ -233,13 +238,14 @@ function openAddPlayer() {
     const duplicate = names.find((name, index) => existing.has(keys[index]));
     if (duplicate) throw new Error(`${duplicate} is already in this match.`);
     let teamChanged = false;
-    const players = names.map((name, index) => {
+    const players = entries.map(({ name, number }, index) => {
       let player = team.players.find(item => item.name.toLocaleLowerCase() === keys[index]);
-      if (!player) { player = { playerId: playerIdFromName(name), name }; team.players.push(player); teamChanged = true; }
+      if (!player) { player = { playerId: playerIdFromName(name), name, ...(number ? { number } : {}) }; team.players.push(player); teamChanged = true; }
+      else if (number && player.number !== number) { player.number = number; teamChanged = true; }
       return player;
     });
     if (teamChanged) await persistTeams();
-    for (const player of players) await append("player_added", clock.elapsedMs, { player: { ...player, status: "available", defaultPositions: [], goalkeeperEligible: true } }, false);
+    for (const player of players) await append("player_added", clock.elapsedMs, { player: eventPlayerRecord(player) }, false);
   });
   $("#dialog-confirm").textContent = "Add";
   bindGrowingPlayerInputs(fields);
@@ -249,8 +255,8 @@ function openAddPlayer() {
 function bindGrowingPlayerInputs(fields) {
   const list = $("#player-name-list");
   list.oninput = () => {
-    const inputs = [...list.querySelectorAll('input[name="playerName"]')];
-    if (inputs.at(-1)?.value.trim()) list.insertAdjacentHTML("beforeend", fields());
+    const rows = [...list.querySelectorAll(".player-entry-row")];
+    if (rows.at(-1)?.querySelector('input[name="playerName"]')?.value.trim()) list.insertAdjacentHTML("beforeend", fields());
   };
 }
 
@@ -359,7 +365,7 @@ function renderField() {
     const column = positionColumn(position, rowLength, index);
     if (!id) return `<div class="empty-field-slot ${position === "gk" ? "keeper-slot" : ""}" style="grid-column:${column}" data-position="${escapeHtml(position)}"><span>＋</span><small>${escapeHtml(shortPosition(position))}</small></div>`;
     const p = state.players[id];
-    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(p.name)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(p.name))}</span><strong title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</strong><span class="player-time">${formatMinutes(p.currentStintMs)}</span></article>`;
+    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(p.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(id, p.name))}</span><strong title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</strong><span class="player-time">${formatMinutes(p.currentStintMs)}</span></article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
   $("#field").innerHTML = bands.map(band => {
@@ -393,7 +399,7 @@ function renderBench() {
   const players = state.bench.filter(Boolean).sort((a, b) => offFieldTime(b) - offFieldTime(a) || a.name.localeCompare(b.name));
   const playerTokens = players.map(player => {
     const offFieldMs = offFieldTime(player);
-    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(player.name))}</span><span class="player-time">${formatMinutes(offFieldMs)}</span></article>`;
+    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(player.playerId, player.name))}</span><span class="player-time">${formatMinutes(offFieldMs)}</span></article>`;
   }).join("");
   $("#bench").innerHTML = `${playerTokens}<button id="add-player" class="add-player-tile" type="button" aria-label="Add players"><span class="add-player-icon" aria-hidden="true">+</span></button><div id="unavailable" class="unavailable-zone" aria-label="Not here"></div>`;
 }
@@ -403,7 +409,7 @@ function renderUnavailable() {
   const zone = $("#unavailable");
   zone.classList.toggle("has-players", unavailable.length > 0);
   zone.style.setProperty("--unavailable-columns", Math.min(unavailable.length + 1, 4));
-  const playerTokens = unavailable.map(player => `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(player.name))}</span></article>`).join("");
+  const playerTokens = unavailable.map(player => `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(player.playerId, player.name))}</span></article>`).join("");
   zone.innerHTML = `<span class="unavailable-label">Not here</span>${playerTokens}`;
 }
 
@@ -640,7 +646,7 @@ function openGoalFor(preselectedPlayerId = "") {
   const { onField, offField } = orderedScorerGroups(state.field, state.bench);
   const shirt = (playerId, detail) => {
     const name = nameOf(playerId);
-    return `<button type="button" class="goal-scorer ${playerId === preselectedPlayerId ? "selected" : ""}" data-scorer-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></button>`;
+    return `<button type="button" class="goal-scorer ${playerId === preselectedPlayerId ? "selected" : ""}" data-scorer-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shirtLabel(playerId, name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></button>`;
   };
   const onFieldShirts = onField.map(playerId => { const position = Object.keys(state.field).find(item => state.field[item] === playerId); return shirt(playerId, shortPosition(position)); }).join("");
   const offFieldShirts = offField.map(playerId => shirt(playerId, "Off field")).join("");
@@ -669,7 +675,7 @@ function openGoalAssist(scorerId, goalTimeMs = clock.elapsedMs) {
   const choices = onField.filter(playerId => playerId !== scorerId).map(playerId => {
     const name = nameOf(playerId);
     const position = Object.keys(state.field).find(item => state.field[item] === playerId);
-    return `<button type="button" class="goal-scorer" data-assist-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shortPlayerName(name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(shortPosition(position))}</small></button>`;
+    return `<button type="button" class="goal-scorer" data-assist-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shirtLabel(playerId, name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(shortPosition(position))}</small></button>`;
   }).join("");
   const noAssist = `<button type="button" class="goal-scorer unknown-scorer" data-assist-id=""><span class="shirt-icon">–</span><strong>No assist</strong><small>Unassisted</small></button>`;
   openDialog("Who assisted?", `<div class="goal-scorer-list"><section class="goal-scorer-group"><div class="goal-scorer-grid">${choices}${noAssist}</div></section></div>`, null, false);
@@ -698,6 +704,7 @@ function openPlayerMenu(playerId) {
   if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
   else if (unavailable) actions += `<button type="button" class="secondary" data-player-action="restore">Move to off field</button>`;
   else actions += `<button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
+  actions += `<button type="button" class="secondary" data-player-action="number">Jersey number${playerNumberOf(playerId) ? `: #${escapeHtml(playerNumberOf(playerId))}` : ""}</button>`;
   actions += `<button type="button" class="secondary danger-action" data-player-action="delete">Delete player</button>`;
   openDialog(nameOf(playerId), `<div class="dialog-fields action-list">${actions}</div>`, null, false);
   document.querySelectorAll("[data-player-action]").forEach(button => button.addEventListener("click", async () => {
@@ -706,8 +713,23 @@ function openPlayerMenu(playerId) {
     if (button.dataset.playerAction === "off") await leaveForBench(playerId);
     if (button.dataset.playerAction === "restore") await moveToBench(playerId);
     if (button.dataset.playerAction === "absent") await markUnavailable(playerId);
+    if (button.dataset.playerAction === "number") openEditPlayerNumber(playerId);
     if (button.dataset.playerAction === "delete") openDeletePlayer(playerId);
   }));
+}
+
+function openEditPlayerNumber(playerId) {
+  const player = team?.players.find(item => item.playerId === playerId);
+  if (!player) return openMessage("Player not found", "This player is not in the current team roster.");
+  openDialog("Jersey number", `<div class="dialog-fields"><label>${escapeHtml(player.name)}<input class="player-number-input" name="playerNumber" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" placeholder="No number" value="${escapeHtml(player.number || "")}" autofocus></label><p class="hint">Saved with the team only. Changing this does not add or alter a match event.</p></div>`, async data => {
+    const number = normalizePlayerNumber(data.get("playerNumber"));
+    if (number) player.number = number;
+    else delete player.number;
+    await persistTeams();
+    renderAt(clock?.elapsedMs || state.elapsedMs);
+    setSaveStatus("Jersey number saved");
+  });
+  $("#dialog-confirm").textContent = "Save";
 }
 
 function openDeletePlayer(playerId) {
@@ -912,7 +934,14 @@ function openMessage(title, message) { openDialog(title, `<p>${escapeHtml(messag
 function showUndo(label) { clearTimeout(toastTimer); $("#undo-label").textContent = label; $("#undo-toast").classList.remove("hidden"); toastTimer = setTimeout(() => $("#undo-toast").classList.add("hidden"), 6000); }
 function setSaveStatus(text, error = false) { $("#save-status").textContent = text; $("#save-status").style.color = error ? "#ff7068" : ""; }
 function nameOf(id) { return state.players[id]?.name || state.config?.roster.find(p => p.playerId === id)?.name || "Unknown"; }
+function playerNumberOf(id) { return team?.players.find(player => player.playerId === id)?.number || ""; }
 function shortPlayerName(name) { return Array.from(String(name || "").trim().split(/\s+/)[0] || "?").slice(0, 3).join("").toUpperCase(); }
+function shirtLabel(id, name) { return playerNumberOf(id) || shortPlayerName(name); }
+function normalizePlayerNumber(value) {
+  const number = String(value ?? "").trim();
+  if (number && !/^\d{1,2}$/.test(number)) throw new Error("Use a jersey number from 0 to 99.");
+  return number;
+}
 function playerOptions(ids, selected) { const ordered = selected && ids.includes(selected) ? [selected, ...ids.filter(id => id !== selected)] : ids; return ordered.map(id => `<option value="${escapeHtml(id)}" ${id === selected ? "selected" : ""}>${escapeHtml(nameOf(id))}</option>`).join(""); }
 function optionList(values, selected) { return values.map(value => `<option ${value === selected ? "selected" : ""}>${escapeHtml(value)}</option>`).join(""); }
 function moveDestinationName(value) { return ({ off_field: "Off field", not_here: "Not here" })[value] || positionName(value); }
@@ -927,7 +956,11 @@ function normalizeTeamPlayers(players) {
   const seen = new Set();
   return (Array.isArray(players) ? players : []).filter(player => player?.name).map(player => {
     const name = String(player.name).trim();
-    return { ...player, playerId: playerIdFromName(name), name };
+    const normalized = { ...player, playerId: playerIdFromName(name), name };
+    const number = String(player.number ?? "").trim();
+    if (/^\d{1,2}$/.test(number)) normalized.number = number;
+    else delete normalized.number;
+    return normalized;
   }).filter(player => {
     const key = player.playerId.toLocaleLowerCase();
     if (!player.playerId || seen.has(key)) return false;

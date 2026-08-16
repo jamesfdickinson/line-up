@@ -2,6 +2,16 @@ export function playerIdFromName(name) {
   return String(name).trim();
 }
 
+export function eventPlayerRecord(player) {
+  return {
+    playerId: player.playerId,
+    name: player.name,
+    status: "available",
+    defaultPositions: [],
+    goalkeeperEligible: true
+  };
+}
+
 const groupOrder = position => ({ forward: 0, mid: 1, back: 2, gk: 3 })[position.split("_")[0]] ?? 4;
 const sideOrder = position => position.includes("_left") ? 0 : position.includes("_right") ? 2 : 1;
 

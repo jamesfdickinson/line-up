@@ -4,7 +4,69 @@
 
 > **Every game tracked reveals more about your team.**
 
+“The coaching clipboard that learns from every game”
+
 The app gives coaches an immediately useful digital clipboard for managing who plays, where, and when. As more games are tracked, it gradually reveals reliable patterns about playing time, positions, combinations, fatigue, conditions, and team performance.
+
+## Description text
+
+LineupJD - The live coaching clipboard that learns from every game.
+
+Use LineupJD to manage today’s game. Every action helps it understand tomorrow’s decisions.
+
+Video records the game. LineupJD records the decisions that shape it.
+
+More insight without more stat keeping.
+
+Do not ask the coach to become a statistician. Let coaching create the statistics.
+
+## Insight without detailed stat keeping
+
+LineupJD can begin answering valuable questions **without asking someone to track every pass, tackle, shot, or touch**. The coach simply uses the live clipboard to manage the game, and LineupJD turns those normal actions into structured data.
+
+The app captures high-level inputs:
+
+- Who is playing
+- Where each player is positioned
+- When players enter, leave, or change roles
+- Which players and formations are used together
+
+It connects those inputs with high-level outcomes:
+
+- Goals for and against
+- Score-margin changes
+- Game results
+- Performance trends across the season
+
+Suggested messages:
+
+> **Manage the game, not the data entry.**
+
+> **High-level input. High-level output. Hidden insight in between.**
+
+> **Run the game. Build the data. Discover what works.**
+
+## Coach-controllable intelligence
+
+LineupJD focuses on decisions a coach can actually make: **who plays, where, when, and with whom**. It measures what happens while those decisions are in effect and looks for patterns that can improve future decisions.
+
+Traditional statistics begin with assumed indicators such as goals, assists, shots, or tackles. LineupJD should also allow the accumulated data to reveal which factors matter, rather than assuming in advance which statistics explain performance.
+
+Those discovered factors may include:
+
+- Player combinations
+- Positions and formations
+- Substitution timing
+- Time on the field and fatigue
+- Rest between games
+- Score state when a change is made
+- Weather, venue, or time of day
+
+The app should distinguish an observed relationship from proven cause. Its job is to surface useful signals, show the amount of supporting data, and help coaches decide what to test next.
+
+Suggested message:
+
+> **See how the decisions you control connect with the results you care about.**
 
 ## Player strength profiles
 
@@ -62,3 +124,6 @@ Insights should unlock when enough information exists to make them useful, not s
 - **The more you track, the more your team reveals.**
 - **Know who to play, where, when, and with whom.**
 - **Turn every game into a better understanding of your players.**
+- **Useful insight without tracking every touch.**
+- **Let the game reveal what matters.**
+- **See how coaching decisions shape the game.**
