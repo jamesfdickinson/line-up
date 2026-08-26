@@ -8,6 +8,7 @@ import { matchIdsForTeam } from "./domain/team.js";
 import { displayedGameTime } from "./domain/game-time.js";
 import { mainMenuMatchStatus } from "./domain/match-status.js";
 import { createId } from "./domain/id.js";
+import { analyzeTeam } from "./domain/analytics.js";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -27,6 +28,114 @@ const SILENT_EVENT_TYPES = new Set([
   "layout_changed",
   "period_started", "period_ended", "clock_paused", "clock_resumed"
 ]);
+const ANALYSIS_CATEGORY_REPORT_COUNT = 7;
+const ANALYSIS_REPORT_COUNT = ANALYSIS_CATEGORY_REPORT_COUNT + 1;
+const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_REPORT_COUNT * 5 + 1;
+const DEMO_ANALYSIS = Object.freeze({
+  matches: 8, completedMatches: 8, wins: 5, draws: 1, losses: 2, winRate: .625,
+  scoreMargin: 6, goalsFor: 18, goalsAgainst: 12, attemptsFor: 91, attemptsAgainst: 67,
+  players: [
+    { name: "Alex M.", averageMinutes: 42, appearances: 8, winRate: .75, scoreMargin: 1.1, onFieldMarginPer60: 1.4, winLift: 12, scoreMarginLift: .8, attemptsForPer60: 11.8, attemptsAgainstPer60: 9.4, attemptDifferentialPer60: 2.4 },
+    { name: "Jordan K.", averageMinutes: 37, appearances: 7, winRate: .71, scoreMargin: .8, onFieldMarginPer60: .9, winLift: 8, scoreMarginLift: .5, attemptsForPer60: 11.1, attemptsAgainstPer60: 9.5, attemptDifferentialPer60: 1.6 },
+    { name: "Sam R.", averageMinutes: 34, appearances: 8, winRate: .63, scoreMargin: .4, onFieldMarginPer60: .4, winLift: 3, scoreMarginLift: .2, attemptsForPer60: 10.4, attemptsAgainstPer60: 9.7, attemptDifferentialPer60: .7 },
+    { name: "Casey T.", averageMinutes: 31, appearances: 6, winRate: .50, scoreMargin: -.2, onFieldMarginPer60: -.5, winLift: -4, scoreMarginLift: -.3, attemptsForPer60: 9.2, attemptsAgainstPer60: 10.0, attemptDifferentialPer60: -.8 },
+    { name: "Taylor B.", averageMinutes: 29, appearances: 7, winRate: .43, scoreMargin: -.5, onFieldMarginPer60: -.8, winLift: -9, scoreMarginLift: -.6, attemptsForPer60: 8.8, attemptsAgainstPer60: 10.5, attemptDifferentialPer60: -1.7 }
+  ],
+  positions: [
+    { position: "forward_striker", minutesMs: 311 * 60_000, marginPer60: 1.2, attemptDifferentialPer60: 3.1 },
+    { position: "mid_center", minutesMs: 348 * 60_000, marginPer60: .7, attemptDifferentialPer60: 1.8 },
+    { position: "back_center", minutesMs: 362 * 60_000, marginPer60: .2, attemptDifferentialPer60: .6 },
+    { position: "gk", minutesMs: 400 * 60_000, marginPer60: -.1, attemptDifferentialPer60: -.3 }
+  ],
+  lineups: [
+    { label: "Alex · Jordan · Riley +2", minutesMs: 96 * 60_000, winRate: .75, scoreMargin: 1.1, attemptsForPer60: 13.2, attemptsAgainstPer60: 7.8 },
+    { label: "Alex · Sam · Morgan +2", minutesMs: 82 * 60_000, winRate: .67, scoreMargin: .7, attemptsForPer60: 11.6, attemptsAgainstPer60: 8.9 },
+    { label: "Jordan · Riley · Casey +2", minutesMs: 74 * 60_000, winRate: .60, scoreMargin: .3, attemptsForPer60: 10.4, attemptsAgainstPer60: 9.5 },
+    { label: "Sam · Casey · Taylor +2", minutesMs: 61 * 60_000, winRate: .43, scoreMargin: -.5, attemptsForPer60: 8.7, attemptsAgainstPer60: 11.4 }
+  ],
+  formations: [
+    { name: "2-2-1", minutesMs: 184 * 60_000, winRateLift: 10, scoreMarginLift: .8, attemptsForEffect: 2.6, attemptsAgainstEffect: -1.4 },
+    { name: "3-1-1", minutesMs: 142 * 60_000, winRateLift: 3, scoreMarginLift: .2, attemptsForEffect: .7, attemptsAgainstEffect: -.8 },
+    { name: "2-1-2", minutesMs: 96 * 60_000, winRateLift: -6, scoreMarginLift: -.5, attemptsForEffect: 1.4, attemptsAgainstEffect: 2.1 }
+  ],
+  timing: [
+    { label: "First 15 played", winRate: .69, marginPer60: 1.4, attemptsForPer60: 12.4, attemptsAgainstPer60: 8.2, attemptDifferentialPer60: 4.2 },
+    { label: "Next 15 played", winRate: .63, marginPer60: .6, attemptsForPer60: 10.8, attemptsAgainstPer60: 9.1, attemptDifferentialPer60: 1.7 },
+    { label: "After 30 played", winRate: .48, marginPer60: -.4, attemptsForPer60: 8.9, attemptsAgainstPer60: 11.2, attemptDifferentialPer60: -2.3 }
+  ],
+  playerPositions: [
+    { name: "Jordan K.", position: "mid_center", minutesMs: 214 * 60_000, winRateLift: 9, scoreMarginLift: .6, attemptsForEffect: 2.9, attemptsAgainstEffect: -.8 },
+    { name: "Alex M.", position: "forward_striker", minutesMs: 196 * 60_000, winRateLift: 7, scoreMarginLift: .5, attemptsForEffect: 2.2, attemptsAgainstEffect: .3 },
+    { name: "Riley S.", position: "back_center", minutesMs: 219 * 60_000, winRateLift: 5, scoreMarginLift: .4, attemptsForEffect: .6, attemptsAgainstEffect: -2.0 },
+    { name: "Morgan P.", position: "gk", minutesMs: 238 * 60_000, winRateLift: 3, scoreMarginLift: .2, attemptsForEffect: -.2, attemptsAgainstEffect: -2.4 },
+    { name: "Casey T.", position: "mid_left", minutesMs: 144 * 60_000, winRateLift: -6, scoreMarginLift: -.4, attemptsForEffect: -.8, attemptsAgainstEffect: 1.1 }
+  ],
+  playerLines: [
+    { name: "Jordan K.", line: "Midfield", minutesMs: 286 * 60_000, winRateLift: 9, scoreMarginLift: .6, attemptsForEffect: 2.5, attemptsAgainstEffect: -.7 },
+    { name: "Alex M.", line: "Forward", minutesMs: 272 * 60_000, winRateLift: 7, scoreMarginLift: .5, attemptsForEffect: 2.1, attemptsAgainstEffect: .2 },
+    { name: "Riley S.", line: "Defense", minutesMs: 301 * 60_000, winRateLift: 6, scoreMarginLift: .4, attemptsForEffect: .5, attemptsAgainstEffect: -2.0 },
+    { name: "Morgan P.", line: "Keeper", minutesMs: 238 * 60_000, winRateLift: 3, scoreMarginLift: .2, attemptsForEffect: -.2, attemptsAgainstEffect: -2.4 },
+    { name: "Casey T.", line: "Midfield", minutesMs: 205 * 60_000, winRateLift: -4, scoreMarginLift: -.3, attemptsForEffect: -.7, attemptsAgainstEffect: .8 }
+  ],
+  playerTiming: [
+    { name: "Alex M.", buckets: [{ label: "First 15 min", winRate: .75, marginPer60: 1.8, attemptsForPer60: 13.1, attemptsAgainstPer60: 7.9 }, { label: "15-30 min", winRate: .68, marginPer60: .9, attemptsForPer60: 11.4, attemptsAgainstPer60: 8.8 }, { label: "After 30 min", winRate: .58, marginPer60: .2, attemptsForPer60: 10.0, attemptsAgainstPer60: 9.7 }] },
+    { name: "Jordan K.", buckets: [{ label: "First 15 min", winRate: .71, marginPer60: 1.1, attemptsForPer60: 12.6, attemptsAgainstPer60: 8.3 }, { label: "15-30 min", winRate: .73, marginPer60: 1.4, attemptsForPer60: 12.9, attemptsAgainstPer60: 8.1 }, { label: "After 30 min", winRate: .51, marginPer60: -.3, attemptsForPer60: 9.2, attemptsAgainstPer60: 10.7 }] },
+    { name: "Riley S.", buckets: [{ label: "First 15 min", winRate: .62, marginPer60: .4, attemptsForPer60: 10.8, attemptsAgainstPer60: 8.7 }, { label: "15-30 min", winRate: .65, marginPer60: .7, attemptsForPer60: 10.5, attemptsAgainstPer60: 8.4 }, { label: "After 30 min", winRate: .43, marginPer60: -.8, attemptsForPer60: 8.1, attemptsAgainstPer60: 11.6 }] },
+    { name: "Casey T.", buckets: [{ label: "First 15 min", winRate: .52, marginPer60: -.2, attemptsForPer60: 9.3, attemptsAgainstPer60: 10.1 }, { label: "15-30 min", winRate: .57, marginPer60: .3, attemptsForPer60: 9.8, attemptsAgainstPer60: 9.7 }, { label: "After 30 min", winRate: .36, marginPer60: -1.1, attemptsForPer60: 7.4, attemptsAgainstPer60: 12.3 }] }
+  ]
+});
+const DEMO_FACTOR_REPORTS = Object.freeze({
+  win: {
+    label: "Win rate", unit: "pts", description: "Estimated lift to win probability", favorable: 1,
+    factors: [
+      { name: "Alex M.", kind: "Player", detail: "8 match appearances", value: 11, low: 3, high: 18, evidence: "Strong" },
+      { name: "Jordan K. · Midfield", kind: "Player + line", detail: "286 minutes in midfield", value: 9, low: 2, high: 16, evidence: "Supported" },
+      { name: "Jordan K. at center mid", kind: "Player + position", detail: "214 minutes in position", value: 8, low: 1, high: 15, evidence: "Supported" },
+      { name: "Riley S. · Defense", kind: "Player + line", detail: "241 minutes in defense", value: 5, low: -1, high: 11, evidence: "Early" },
+      { name: "Taylor B.", kind: "Player", detail: "7 match appearances", value: -7, low: -14, high: 1, evidence: "Early" }
+    ]
+  },
+  margin: {
+    label: "Score margin", unit: "goals", description: "Estimated change in score margin per match", favorable: 1,
+    factors: [
+      { name: "Alex M.", kind: "Player", detail: "336 on-field minutes", value: .7, low: .2, high: 1.2, evidence: "Strong" },
+      { name: "Jordan K. · Midfield", kind: "Player + line", detail: "286 minutes in midfield", value: .6, low: .1, high: 1.0, evidence: "Supported" },
+      { name: "Jordan K. at center mid", kind: "Player + position", detail: "214 minutes in position", value: .5, low: .1, high: .9, evidence: "Supported" },
+      { name: "Riley S. · Defense", kind: "Player + line", detail: "241 minutes in defense", value: .3, low: -.1, high: .7, evidence: "Early" },
+      { name: "Casey T.", kind: "Player", detail: "186 on-field minutes", value: -.4, low: -.9, high: .1, evidence: "Early" }
+    ]
+  },
+  attemptsFor: {
+    label: "Attempts for", unit: "/ 60", description: "Estimated change in team attempts created", favorable: 1,
+    factors: [
+      { name: "Jordan K. at center mid", kind: "Player + position", detail: "38 attempts in shared stints", value: 2.9, low: 1.2, high: 4.5, evidence: "Strong" },
+      { name: "Jordan K. · Midfield", kind: "Player + line", detail: "46 attempts in midfield", value: 2.5, low: 1.0, high: 4.0, evidence: "Strong" },
+      { name: "Alex M.", kind: "Player", detail: "52 attempts in on-field stints", value: 2.1, low: .7, high: 3.5, evidence: "Supported" },
+      { name: "Alex M. · Forward", kind: "Player + line", detail: "272 minutes as a forward", value: 1.6, low: .3, high: 2.9, evidence: "Supported" },
+      { name: "Casey T.", kind: "Player", detail: "24 attempts in on-field stints", value: -.8, low: -2.1, high: .5, evidence: "Early" }
+    ]
+  },
+  attemptsAgainst: {
+    label: "Attempts against", unit: "/ 60", description: "Estimated change in opponent attempts allowed", favorable: -1,
+    factors: [
+      { name: "Riley S. at goalkeeper", kind: "Player + position", detail: "238 minutes in position", value: -2.4, low: -4.1, high: -.8, evidence: "Strong" },
+      { name: "Riley S. · Defense", kind: "Player + line", detail: "301 minutes in defense", value: -2.0, low: -3.5, high: -.6, evidence: "Strong" },
+      { name: "Morgan P. at center back", kind: "Player + position", detail: "219 minutes in position", value: -1.7, low: -3.0, high: -.4, evidence: "Supported" },
+      { name: "Alex M.", kind: "Player", detail: "336 on-field minutes", value: -1.1, low: -2.4, high: .1, evidence: "Early" },
+      { name: "Taylor B.", kind: "Player", detail: "203 on-field minutes", value: 1.3, low: -.2, high: 2.8, evidence: "Early" }
+    ]
+  },
+  attemptsMargin: {
+    label: "Attempts margin", unit: "/ 60", description: "Estimated change in attempts for minus attempts against", favorable: 1,
+    factors: [
+      { name: "Jordan K. · Midfield", kind: "Player + line", detail: "286 minutes in midfield", value: 3.2, low: 1.2, high: 5.1, evidence: "Strong" },
+      { name: "Riley S. · Defense", kind: "Player + line", detail: "301 minutes in defense", value: 2.5, low: .7, high: 4.3, evidence: "Strong" },
+      { name: "Jordan K. at center mid", kind: "Player + position", detail: "214 minutes in position", value: 2.1, low: .4, high: 3.8, evidence: "Supported" },
+      { name: "Alex M.", kind: "Player", detail: "336 on-field minutes", value: 1.7, low: .1, high: 3.3, evidence: "Supported" },
+      { name: "Casey T.", kind: "Player", detail: "186 on-field minutes", value: -1.9, low: -3.8, high: .1, evidence: "Early" }
+    ]
+  }
+});
 
 const $ = selector => document.querySelector(selector);
 const store = new EventStore();
@@ -76,10 +185,11 @@ function bindStaticEvents() {
   matchTabs.append($("#more-actions"));
   $("#team-name-input").addEventListener("change", saveTeam);
   $("#create-new-match").addEventListener("click", createBlankMatch);
-  $("#season-analysis").addEventListener("click", showSeasonAnalysis);
+  $("#analysis-card").addEventListener("click", showSeasonAnalysis);
   $("#team-menu").addEventListener("click", openTeamMenu);
   $("#add-first-team").addEventListener("click", openAddTeam);
-  $("#back-to-team").addEventListener("click", () => { $("#season-analysis-panel").classList.add("hidden"); $("#team-dashboard").classList.remove("hidden"); });
+  $("#back-to-team").addEventListener("click", () => { $("#season-analysis-panel").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#team-dashboard").classList.remove("hidden"); });
+  $("#back-to-analysis").addEventListener("click", () => { $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden"); window.scrollTo(0, 0); });
   $("#team-matches").addEventListener("click", event => { const button = event.target.closest("[data-open-match]"); if (button) loadMatch(button.dataset.openMatch); });
   $("#clock-button").addEventListener("click", openClockAdjust);
   $("#match-control").addEventListener("click", toggleClock);
@@ -140,6 +250,7 @@ function openAddTeam() {
     teams.push(team);
     await persistTeams();
     $("#season-analysis-panel").classList.add("hidden");
+    $("#analysis-method-panel").classList.add("hidden");
     await renderTeamDashboard();
     setSaveStatus("Team added");
   });
@@ -151,6 +262,7 @@ async function selectTeam(teamId) {
   team = selected;
   await persistTeams();
   $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
   await renderTeamDashboard();
   setSaveStatus(`${team.name} selected`);
 }
@@ -165,6 +277,7 @@ function openDeleteTeam(teamId) {
     if (team?.teamId === teamId) team = teams[0] || null;
     await persistTeams();
     $("#season-analysis-panel").classList.add("hidden");
+    $("#analysis-method-panel").classList.add("hidden");
     await renderTeamDashboard();
     setSaveStatus("Team deleted");
   });
@@ -205,12 +318,26 @@ async function renderTeamDashboard() {
   $("#no-team-panel").classList.toggle("hidden", hasTeam);
   $("#team-dashboard").classList.toggle("hidden", !hasTeam);
   $("#team-name-input").disabled = !hasTeam;
-  $("#season-analysis").disabled = !hasTeam;
   if (!hasTeam) { $("#team-name-input").value = ""; return; }
   $("#team-name-input").value = team.name;
   const all = await store.allEvents();
   const ids = matchIdsForTeam(all, team.teamId);
-  const matches = ids.map(id => { const matchEvents = all.filter(event => event.matchId === id); return projector.project(matchEvents); }).sort((a, b) => b.config.date.localeCompare(a.config.date));
+  const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id))).sort((a, b) => b.state.config.date.localeCompare(a.state.config.date));
+  const matches = records.map(record => record.state);
+  const analysis = analyzeTeam(records);
+  const readyReportCount = analysis.outcomeReportReadyCount + Number(analysis.readiness.playingTime.ready);
+  const readyPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
+  const seenReadyCount = Number((await store.getMeta(`analysisReportSeen:${team.teamId}`))?.value || 0);
+  const newReports = Math.max(0, readyReportCount - seenReadyCount);
+  $("#analysis-new-badge").classList.toggle("hidden", newReports === 0);
+  $("#analysis-new-badge").textContent = newReports > 1 ? `${newReports} new` : "New";
+  $("#analysis-card-status").textContent = newReports
+    ? `${newReports} new report${newReports === 1 ? "" : "s"} fully unlocked`
+    : readyReportCount
+      ? `${readyReportCount} of ${ANALYSIS_REPORT_COUNT} reports fully unlocked`
+      : readyPartCount
+        ? `${readyPartCount} of ${ANALYSIS_OUTCOME_COUNT} report parts ready`
+        : "Demo reports ready to preview";
   const pausedAtByMatch = new Map(ids.map(id => {
     const matchEvents = activeTimeline(all.filter(event => event.matchId === id));
     const pausedEvent = [...matchEvents].reverse().find(event => ["clock_paused", "period_ended"].includes(event.type));
@@ -266,12 +393,378 @@ async function showSeasonAnalysis() {
   if (!team) return;
   const all = await store.allEvents();
   const ids = matchIdsForTeam(all, team.teamId);
-  const matches = ids.map(id => projector.project(all.filter(event => event.matchId === id)));
-  const goalsFor = matches.reduce((sum, match) => sum + match.scoreFor, 0), goalsAgainst = matches.reduce((sum, match) => sum + match.scoreAgainst, 0);
-  const playerMinutes = {};
-  for (const match of matches) for (const player of Object.values(match.players)) playerMinutes[player.name] = (playerMinutes[player.name] || 0) + player.totalMs;
-  $("#season-summary").innerHTML = `<div class="analysis-kpis"><article><strong>${matches.length}</strong><span>Matches</span></article><article><strong>${goalsFor}</strong><span>Goals for</span></article><article><strong>${goalsAgainst}</strong><span>Goals against</span></article></div><div class="minutes-report">${Object.entries(playerMinutes).sort((a,b)=>b[1]-a[1]).map(([name,ms]) => `<article class="minute-card"><div class="minute-top"><strong>${escapeHtml(name)}</strong><strong>${formatMinutes(ms)}</strong></div></article>`).join("")}</div>`;
-  $("#team-dashboard").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden");
+  const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id)));
+  const analysis = analyzeTeam(records);
+  $("#season-summary").innerHTML = teamAnalysisHtml(analysis);
+  bindAnalysisControls(analysis);
+  await store.setMeta(`analysisReportSeen:${team.teamId}`, analysis.outcomeReportReadyCount + Number(analysis.readiness.playingTime.ready));
+  $("#analysis-new-badge").classList.add("hidden");
+  $("#team-dashboard").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden");
+}
+
+function analysisRecord(matchEvents) {
+  const projected = projector.project(matchEvents);
+  const pausedEvent = [...activeTimeline(matchEvents)].reverse().find(event => ["clock_paused", "period_ended"].includes(event.type));
+  const status = mainMenuMatchStatus(projected, pausedEvent?.realTimestamp);
+  return { events: matchEvents, state: projected, isFinal: status === "Final" || status === "Over" };
+}
+
+function teamAnalysisHtml(analysis) {
+  const minutesReady = analysis.readiness.playingTime.ready && analysis.players.length;
+  const readinessPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
+  const readinessCategories = [["team", "Team"], ["impact", "Player"], ["lines", "Player position rank"], ["fatigue", "Time on field average"], ["formations", "Formation"], ["playerTime", "Time on field by player"], ["positions", "Player position name"]];
+  const readinessOutcomes = [["attemptsMargin", "Attempts margin"], ["attemptsAgainst", "Attempts against"], ["attemptsFor", "Attempts for"], ["margin", "Score margin"], ["win", "Win rate"]];
+  const minutesSource = minutesReady ? analysis.players : DEMO_ANALYSIS.players;
+  return `
+    <section class="analysis-readiness-card">
+      <div class="analysis-readiness-top"><div><span class="eyebrow">Data readiness</span><h3>${readinessPartCount} of ${ANALYSIS_OUTCOME_COUNT} report parts ready</h3><p>Average playing time unlocks from tracked field time. Each analysis category becomes fully unlocked when all five outcomes are ready.</p></div><strong>${readinessPartCount}/${ANALYSIS_OUTCOME_COUNT}</strong></div>
+      <div class="readiness-track"><span style="width:${readinessPartCount / ANALYSIS_OUTCOME_COUNT * 100}%"></span></div>
+      <div class="readiness-list">
+        <article class="${analysis.readiness.playingTime.ready ? "ready" : ""}"><span>${analysis.readiness.playingTime.ready ? "✓" : "○"}</span><div><strong>Average playing time</strong><small>Basic tracking report · 1 match</small><div class="readiness-outcomes"><span class="${analysis.readiness.playingTime.ready ? "ready" : ""}" title="${escapeHtml(analysis.readiness.playingTime.needs)}">Field time ${analysis.readiness.playingTime.ready ? "✓" : `${analysis.readiness.playingTime.progress}%`}</span></div></div><em>${analysis.readiness.playingTime.ready ? "1/1" : `${analysis.readiness.playingTime.progress}%`}</em></article>
+        ${readinessCategories.map(([key, title]) => {
+        const parts = readinessOutcomes.map(([metric, label]) => ({ label, readiness: analysis.outcomeReadiness[key][metric] }));
+        const readyParts = parts.filter(part => part.readiness.ready).length;
+        const progress = Math.max(...parts.map(part => part.readiness.progress));
+        return `<article class="${readyParts ? "ready" : ""}"><span>${readyParts ? "✓" : "○"}</span><div><strong>By ${title}</strong><small>${readyParts} of ${parts.length} outcomes ready</small><div class="readiness-outcomes">${parts.map(part => `<span class="${part.readiness.ready ? "ready" : ""}" title="${escapeHtml(part.readiness.needs)}">${part.label} ${part.readiness.ready ? "✓" : `${part.readiness.progress}%`}</span>`).join("")}</div></div><em>${readyParts ? `${readyParts}/${parts.length}` : `${progress}%`}</em></article>`;
+      }).join("")}</div>
+    </section>
+
+    <div class="analysis-report-grid report-progression-grid">
+      <section class="analysis-report-card playing-time-report">
+        <div class="analysis-report-head"><div><span class="eyebrow">Quick summary · 1 match</span><h3>Average playing time</h3><p>Compare average field time per game with total field time accumulated this season.</p></div>${sourcePill(minutesReady)}</div>
+        <div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period">
+          <button class="active" type="button" data-playing-time-view="game">Per game</button>
+          <button type="button" data-playing-time-view="season">Per season</button>
+        </div>
+        <div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(minutesSource, "game")}</div>
+        ${reportModelNote("Timeline duration aggregation")}
+        ${unlockFooter(analysis.readiness.playingTime, minutesReady ? "Calculated from every on-field interval." : "Preview uses sample players and values.")}
+      </section>
+
+    </div>
+
+    ${outcomeReportsHtml(analysis)}
+
+    <p class="analysis-method-note"><strong>How to read this:</strong> CoachJD connects who was on the field, where, and when with goals, results, and optional attempts. It recommends arrangements—not player actions—and stays cautious while samples are small.</p>`;
+}
+
+function sourcePill(ready) { return `<span class="source-pill ${ready ? "live" : "demo"}">${ready ? "Your data" : "Demo preview"}</span>`; }
+
+function reportModelNote(name) {
+  return `<div class="bayesian-model-note"><span>Model</span><strong>${escapeHtml(name)}</strong><button class="info-button model-info-button" data-analysis-method-link type="button" aria-label="More details about this model" title="More model details">i</button></div>`;
+}
+
+function playingTimeListHtml(players, view) {
+  const seasonMinutes = player => Number.isFinite(player.seasonMinutes)
+    ? player.seasonMinutes
+    : player.averageMinutes * player.appearances;
+  const value = player => view === "season" ? seasonMinutes(player) : player.averageMinutes;
+  const source = [...players].sort((a, b) => value(b) - value(a)).slice(0, 6);
+  const maxMinutes = Math.max(1, ...source.map(value));
+  return source.map(player => {
+    const appearances = `${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`;
+    const detail = view === "season"
+      ? `${appearances} · ${Math.round(player.averageMinutes)}m per game`
+      : `${appearances} · ${Math.round(seasonMinutes(player))}m this season`;
+    const label = view === "season" ? `${Math.round(seasonMinutes(player))}m` : `${Math.round(player.averageMinutes)}m`;
+    return `<article><div><strong>${escapeHtml(player.name)}</strong><small>${detail}</small></div><span class="time-bar"><i style="width:${value(player) / maxMinutes * 100}%"></i></span><b>${label}</b></article>`;
+  }).join("");
+}
+
+function outcomeReportsHtml(analysis) {
+  const metrics = ["attemptsMargin", "attemptsAgainst", "attemptsFor", "margin", "win"];
+  const reports = [
+    ["team", "By Team", "The team baseline across completed matches and tracked attempts."],
+    ["impact", "By Player", "Which players have the strongest positive or negative effect while on the field."],
+    ["lines", "By Player Position Rank", "How each player affects outcomes as a keeper, defender, midfielder, or forward."],
+    ["fatigue", "Time on Field vs Outcomes", "The average outcome across all players during their first, second, and later 15 minutes on the field."],
+    ["formations", "By Formation", "How each formation relates to results, goal margin, and attacking or defensive pressure."],
+    ["playerTime", "Time on Field by Player", "How time on field relates to outcomes for each individual player. This report needs more data before drawing player-level conclusions."],
+    ["positions", "By Player Position Name", "How each player affects outcomes in a specific named field position."]
+  ];
+
+  return reports.map(([category, title, description]) => {
+    const readyOutcomes = metrics.filter(metric => analysis.outcomeReadiness[category][metric].ready).length;
+    const reportStatus = readyOutcomes === metrics.length
+      ? `<span class="source-pill live">Fully unlocked</span>`
+      : readyOutcomes
+        ? `<span class="source-pill partial">${readyOutcomes} / ${metrics.length} ready</span>`
+        : `<span class="source-pill demo">Demo preview</span>`;
+    return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}">
+      <div class="analysis-report-head"><div><h3>${title}</h3><p>${description}</p></div><div class="report-head-tools">${reportStatus}</div></div>
+      ${outcomeMetricToggle(analysis, category)}
+      <div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, "attemptsMargin")}</div>
+      ${reportModelNote(category === "team" ? "Basic averages" : category === "formations" ? "Bayesian-smoothed formation stint averages" : "Bayesian hierarchical Poisson")}
+    </section>`;
+  }).join("");
+}
+
+function outcomeMetricToggle(analysis, category, active = "attemptsMargin") {
+  const metrics = [["attemptsMargin", "Attempts margin"], ["attemptsAgainst", "Attempts against"], ["attemptsFor", "Attempts for"], ["margin", "Score margin"], ["win", "Win rate"]];
+  return `<div class="breakdown-toggle outcome-metric-toggle" data-category-report="${category}" role="group" aria-label="Outcome shown in this report">${metrics.map(([key, label]) => {
+    const readiness = analysis.outcomeReadiness[category][key];
+    const demo = !readiness.ready;
+    return `<button class="${key === active ? "active " : ""}${demo ? "demo-preview" : "ready"}" type="button" data-metric-key="${key}" aria-label="${escapeHtml(`${label}${demo ? ", demo preview" : ", ready"}`)}" title="${escapeHtml(demo ? `Demo preview · ${readiness.needs}` : `${label} · your team data`)}">${label}</button>`;
+  }).join("")}</div>`;
+}
+
+function teamOutcomeHtml(analysis, metric) {
+  const readiness = analysis.outcomeReadiness.team[metric];
+  const source = readiness.ready ? analysis : DEMO_ANALYSIS;
+  const attemptMetric = metric === "attemptsFor" || metric === "attemptsAgainst" || metric === "attemptsMargin";
+  const matches = Math.max(1, metric === "win" || metric === "margin" ? source.completedMatches : source.attemptMatches || source.matches);
+  const value = metric === "win" ? source.winRate * 100
+    : metric === "margin" ? source.scoreMargin / matches
+      : metric === "attemptsMargin" ? (source.attemptsFor - source.attemptsAgainst) / matches
+        : source[metric] / matches;
+  const label = metric === "attemptsMargin" ? `${formatSigned(value, 1)} / match`
+    : attemptMetric ? `${Number(value).toFixed(1)} / match`
+      : metricValueLabel(value, metric);
+  return `<div class="outcome-summary"><article><span>Team ${metricPresentation(metric).label}</span><strong>${label}</strong><small>${matches} ${metric === "win" || metric === "margin" ? "completed" : "tracked"} match${matches === 1 ? "" : "es"}</small></article><article><span>Record</span><strong>${source.completedMatches ? `${source.wins}-${source.draws}-${source.losses}` : "—"}</strong><small>Win · draw · loss</small></article><article><span>Events</span><strong>${attemptMetric ? source.attemptsFor + source.attemptsAgainst : source.goalsFor + source.goalsAgainst}</strong><small>${attemptMetric ? `${source.attemptsFor} for · ${source.attemptsAgainst} against` : "goals recorded"}</small></article></div>${outcomeStatusHtml(readiness)}`;
+}
+
+function categoryOutcomeHtml(analysis, category, metric) {
+  const readiness = analysis.outcomeReadiness[category][metric];
+  const preview = readiness.ready ? "" : `<div class="metric-preview-notice"><strong>Demo preview</strong><span>${escapeHtml(readiness.needs)}</span></div>`;
+  if (category === "team") return `${preview}${teamOutcomeHtml(analysis, metric)}`;
+  if (category === "formations") return `${preview}${formationOutcomeHtml(analysis, metric)}`;
+  if (category === "impact") return `${preview}${factorReportHtml(metric, "player")}${outcomeStatusHtml(readiness)}`;
+  if (category === "lines") return `${preview}${lineOutcomeHtml(analysis, metric)}`;
+  if (category === "positions") return `${preview}${positionOutcomeHtml(analysis, metric)}`;
+  if (category === "fatigue") return `${preview}${averageTimeOutcomeHtml(analysis, metric)}`;
+  return `${preview}${timingBreakdownHtml(analysis, "player", metric)}`;
+}
+
+function openAnalysisMethod(analysis) {
+  $("#method-data-summary").innerHTML = `<article><span>Recorded matches</span><strong>${analysis.matches}</strong></article><article><span>Completed matches</span><strong>${analysis.completedMatches}</strong></article><article><span>Goal events</span><strong>${analysis.goalsFor + analysis.goalsAgainst}</strong></article><article><span>Attempt events</span><strong>${analysis.attemptsFor + analysis.attemptsAgainst}</strong></article>`;
+  $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.remove("hidden");
+  window.scrollTo(0, 0);
+}
+
+function outcomeStatusHtml(readiness) {
+  if (!readiness) return "";
+  return `<p class="outcome-readiness ${readiness.ready ? "ready" : ""}"><strong>${readiness.ready ? "This outcome view is unlocked" : `${readiness.progress}% toward this view`}</strong><span>${readiness.ready ? "More matches and a refreshed model will narrow its uncertainty." : readiness.needs}</span></p>`;
+}
+
+function metricPresentation(metric) {
+  return {
+    win: { label: "Win rate", unit: "%", digits: 0, favorable: 1 },
+    margin: { label: "Score margin", unit: "goals", digits: 1, favorable: 1 },
+    attemptsFor: { label: "Attempts for", unit: "/ 60", digits: 1, favorable: 1 },
+    attemptsAgainst: { label: "Attempts against", unit: "/ 60", digits: 1, favorable: -1 },
+    attemptsMargin: { label: "Attempts margin", unit: "/ 60", digits: 1, favorable: 1 }
+  }[metric];
+}
+
+function metricValueLabel(value, metric) {
+  const config = metricPresentation(metric);
+  if (metric === "win") return `${Math.round(value)}%`;
+  if (metric === "attemptsFor" || metric === "attemptsAgainst") return `${Number(value).toFixed(config.digits)} ${config.unit}`;
+  return `${formatSigned(value, config.digits)} ${config.unit}`;
+}
+
+function lineOutcomeHtml(analysis, metric) { return deploymentOutcomeHtml(analysis, metric, "line"); }
+function positionOutcomeHtml(analysis, metric) { return deploymentOutcomeHtml(analysis, metric, "position"); }
+
+function formationOutcomeHtml(analysis, metric) {
+  const readiness = analysis.outcomeReadiness.formations[metric];
+  const actualReady = readiness.ready && analysis.formations.length > 0;
+  const source = actualReady ? analysis.formations : DEMO_ANALYSIS.formations;
+  const teamWinRate = analysis.winRate;
+  const teamMarginPer60 = analysis.exposureMs ? analysis.scoreMargin * 3_600_000 / analysis.exposureMs : 0;
+  const attemptsForBaseline = analysis.exposureMs ? analysis.attemptsFor * 3_600_000 / analysis.exposureMs : 0;
+  const attemptsAgainstBaseline = analysis.exposureMs ? analysis.attemptsAgainst * 3_600_000 / analysis.exposureMs : 0;
+  const attemptsMarginBaseline = attemptsForBaseline - attemptsAgainstBaseline;
+  const config = {
+    win: { label: "smoothed win-rate lift", unit: "pts", favorable: 1, value: item => actualReady ? (item.smoothedWinRate - teamWinRate) * 100 : item.winRateLift },
+    margin: { label: "smoothed score-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedMarginPer60 - teamMarginPer60 : item.scoreMarginLift },
+    attemptsFor: { label: "smoothed attempts-for effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedAttemptsForPer60 - attemptsForBaseline : item.attemptsForEffect },
+    attemptsAgainst: { label: "smoothed attempts-against effect", unit: "/ 60", favorable: -1, value: item => actualReady ? item.smoothedAttemptsAgainstPer60 - attemptsAgainstBaseline : item.attemptsAgainstEffect },
+    attemptsMargin: { label: "smoothed attempts-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedAttemptDifferentialPer60 - attemptsMarginBaseline : item.attemptsForEffect - item.attemptsAgainstEffect }
+  }[metric];
+  const rows = source.map(item => ({ ...item, effect: config.value(item) })).sort((a, b) => (b.effect - a.effect) * config.favorable).slice(0, 6);
+  const max = Math.max(1, ...rows.map(item => Math.abs(item.effect)));
+  return `<div class="position-outcome-list">${rows.map(item => {
+    const favorable = item.effect * config.favorable >= 0;
+    const width = Math.min(48, Math.abs(item.effect) / max * 46);
+    return `<article><div><strong>${escapeHtml(item.name)}</strong><span>Formation</span><small>${actualReady ? `${Math.round(item.minutesMs / 60_000)} min sample` : "Demo sample"}</small></div><span class="impact-scale"><i class="impact-fill ${item.effect >= 0 ? "positive" : "negative"} ${favorable ? "favorable" : "unfavorable"}" style="--bar:${width}%"></i></span><b class="${favorable ? "positive-text" : "negative-text"}">${formatSigned(item.effect, config.unit === "pts" ? 0 : 1)} ${config.unit}</b></article>`;
+  }).join("")}</div><p class="position-outcome-caption">${actualReady ? "Compared with this team's baseline. Low-minute formations are pulled more strongly toward that baseline." : "Demo preview"} · ${escapeHtml(config.label)} by formation.</p>${outcomeStatusHtml(readiness)}`;
+}
+
+function deploymentOutcomeHtml(analysis, metric, scope) {
+  const isLine = scope === "line";
+  const actualSource = isLine ? analysis.playerLines : analysis.playerPositions;
+  const demoSource = isLine ? DEMO_ANALYSIS.playerLines : DEMO_ANALYSIS.playerPositions;
+  const readiness = analysis.outcomeReadiness[isLine ? "lines" : "positions"][metric];
+  const actualReady = readiness.ready && (metric === "win" || metric === "margin" ? actualSource.some(item => item.completedAppearances) : actualSource.length > 0);
+  const source = actualReady ? actualSource : demoSource;
+  const teamMargin = analysis.completedMatches ? analysis.scoreMargin / analysis.completedMatches : 0;
+  const attemptsForBaseline = analysis.exposureMs ? analysis.attemptsFor * 3_600_000 / analysis.exposureMs : 0;
+  const attemptsAgainstBaseline = analysis.exposureMs ? analysis.attemptsAgainst * 3_600_000 / analysis.exposureMs : 0;
+  const attemptsMarginBaseline = attemptsForBaseline - attemptsAgainstBaseline;
+  const config = {
+    win: { label: "win-rate lift", unit: "pts", favorable: 1, value: item => actualReady ? (item.winRate - analysis.winRate) * 100 : item.winRateLift },
+    margin: { label: "score-margin effect", unit: "goals", favorable: 1, value: item => actualReady ? item.scoreMargin - teamMargin : item.scoreMarginLift },
+    attemptsFor: { label: "shots-for effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.attemptsForPer60 - attemptsForBaseline : item.attemptsForEffect },
+    attemptsAgainst: { label: "shots-against effect", unit: "/ 60", favorable: -1, value: item => actualReady ? item.attemptsAgainstPer60 - attemptsAgainstBaseline : item.attemptsAgainstEffect },
+    attemptsMargin: { label: "attempts-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.attemptDifferentialPer60 - attemptsMarginBaseline : item.attemptsForEffect - item.attemptsAgainstEffect }
+  }[metric];
+  const rows = source.map(item => ({ ...item, effect: config.value(item) })).sort((a, b) => (b.effect - a.effect) * config.favorable).slice(0, 6);
+  const max = Math.max(1, ...rows.map(item => Math.abs(item.effect)));
+  return `<div class="position-outcome-list">${rows.map(item => {
+    const favorable = item.effect * config.favorable >= 0;
+    const width = Math.min(48, Math.abs(item.effect) / max * 46);
+    const deploymentLabel = isLine ? item.line : positionName(item.position);
+    return `<article><div><strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(deploymentLabel)}</span><small>${Math.round(item.minutesMs / 60_000)} min sample</small></div><span class="impact-scale"><i class="impact-fill ${item.effect >= 0 ? "positive" : "negative"} ${favorable ? "favorable" : "unfavorable"}" style="--bar:${width}%"></i></span><b class="${favorable ? "positive-text" : "negative-text"}">${formatSigned(item.effect, config.unit === "pts" ? 0 : 1)} ${config.unit}</b></article>`;
+  }).join("")}</div><p class="position-outcome-caption">${actualReady ? "Compared with this team's baseline." : "Demo preview"} · ${escapeHtml(config.label)}. ${isLine ? "Rank" : "Position"} minutes are shown only to explain sample size.</p>${outcomeStatusHtml(readiness)}`;
+}
+
+function timingBreakdownHtml(analysis, view, metric) {
+  const readiness = analysis.outcomeReadiness.playerTime[metric];
+  const actualReady = readiness.ready;
+  const config = metricPresentation(metric);
+  const bucketValue = bucket => metric === "win" ? bucket.winRate * 100
+    : metric === "margin" ? bucket.marginPer60
+      : metric === "attemptsFor" ? bucket.attemptsForPer60
+        : metric === "attemptsAgainst" ? bucket.attemptsAgainstPer60
+          : bucket.attemptDifferentialPer60 ?? bucket.attemptsForPer60 - bucket.attemptsAgainstPer60;
+  if (view === "team") {
+    const source = actualReady ? analysis.timing : DEMO_ANALYSIS.timing;
+    const max = Math.max(1, ...source.map(item => Math.abs(bucketValue(item))));
+    return `<div class="timing-list">${source.map(item => `<article><span>${escapeHtml(item.label)}</span><div><i class="${metric === "margin" && bucketValue(item) < 0 ? "negative" : ""}" style="width:${Math.min(100, Math.abs(bucketValue(item)) / max * 100)}%"></i></div><strong>${metricValueLabel(bucketValue(item), metric)}</strong></article>`).join("")}</div><p class="player-timing-caption">${escapeHtml(config.label)} by match phase.</p>${outcomeStatusHtml(readiness)}`;
+  }
+  const players = actualReady ? analysis.playerTiming : DEMO_ANALYSIS.playerTiming;
+  const seasonPlayers = actualReady ? analysis.players : DEMO_ANALYSIS.players;
+  return `${playerTimeRelationshipChartHtml(seasonPlayers, metric, actualReady)}<div class="player-timing-detail"><strong>Outcome by accumulated minutes played</strong><span>Player detail</span></div><div class="player-timing-table"><div class="player-timing-head"><span>Player</span><span>First 15 played</span><span>Next 15 played</span><span>After 30 played</span></div>${players.slice(0, 6).map(player => `<article><strong>${escapeHtml(player.name)}</strong>${player.buckets.map(bucket => `<span title="${escapeHtml(`${bucket.label} · ${config.label}`)}">${metricValueLabel(bucketValue(bucket), metric)}</span>`).join("")}</article>`).join("")}</div><p class="player-timing-caption">The graph summarizes the season; the table shows ${escapeHtml(config.label.toLowerCase())} during each player's accumulated minutes, even when they enter late or return after a substitution.</p>${outcomeStatusHtml(readiness)}`;
+}
+
+function averageTimeOutcomeHtml(analysis, metric) {
+  const readiness = analysis.outcomeReadiness.fatigue[metric];
+  const actualReady = readiness.ready;
+  const source = actualReady ? analysis.playerTime : DEMO_ANALYSIS.timing;
+  const outcomeValue = bucket => metric === "win" ? bucket.winRate * 100
+    : metric === "margin" ? bucket.marginPer60
+      : metric === "attemptsFor" ? bucket.attemptsForPer60
+        : metric === "attemptsAgainst" ? bucket.attemptsAgainstPer60
+          : bucket.attemptDifferentialPer60 ?? bucket.attemptsForPer60 - bucket.attemptsAgainstPer60;
+  const chartMetricLabel = metric === "margin" ? "score margin per 60 minutes" : metricPresentation(metric).label.toLowerCase();
+  const chartValueLabel = value => metric === "margin" ? `${formatSigned(value, 1)} / 60` : metricValueLabel(value, metric);
+  const values = source.map(outcomeValue);
+  let minValue = Math.min(...values);
+  let maxValue = Math.max(...values);
+  const padding = Math.max(metric === "win" ? 5 : .5, (maxValue - minValue) * .18);
+  minValue -= padding;
+  maxValue += padding;
+  const left = 72, right = 690, top = 26, bottom = 232;
+  const x = index => left + index * (right - left) / Math.max(1, source.length - 1);
+  const y = value => bottom - (value - minValue) / (maxValue - minValue) * (bottom - top);
+  const yTicks = [maxValue, (minValue + maxValue) / 2, minValue];
+  const linePoints = source.map((bucket, index) => `${x(index)},${y(outcomeValue(bucket))}`).join(" ");
+
+  return `<div class="time-outcome-chart-head"><div><strong>All-player average</strong><span>Accumulated time on field vs ${escapeHtml(chartMetricLabel)}</span></div><em>${actualReady ? "Your season" : "Demo preview"}</em></div><div class="time-outcome-chart average-time-chart"><svg viewBox="0 0 720 286" role="img" aria-label="Average outcome across all players by accumulated time on field">
+    ${yTicks.map((tick, index) => { const tickY = top + index * (bottom - top) / 2; return `<line class="time-outcome-grid" x1="${left}" y1="${tickY}" x2="${right}" y2="${tickY}"></line><text class="time-outcome-axis" x="61" y="${tickY + 4}" text-anchor="end">${escapeHtml(chartValueLabel(tick))}</text>`; }).join("")}
+    <line class="time-outcome-axis-line" x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}"></line>
+    <polyline class="average-time-line" points="${linePoints}"></polyline>
+    ${source.map((bucket, index) => `<g class="average-time-point" transform="translate(${x(index)} ${y(outcomeValue(bucket))})"><title>${escapeHtml(`${bucket.label}: ${chartValueLabel(outcomeValue(bucket))}`)}</title><circle r="7"></circle></g><text class="time-outcome-axis average-time-label" x="${x(index)}" y="254" text-anchor="middle">${escapeHtml(bucket.label)}</text>`).join("")}
+    <text class="time-outcome-x-label" x="${(left + right) / 2}" y="279" text-anchor="middle">Accumulated minutes each player has played</text>
+  </svg></div><p class="time-outcome-chart-caption">All player exposures are pooled into three time bands, allowing this team-level report to build sooner. Rates are normalized for exposure; the pattern is an association, not proof of causation.</p>${outcomeStatusHtml(readiness)}`;
+}
+
+function playerTimeRelationshipChartHtml(players, metric, actualReady) {
+  const chartMetricLabel = metric === "margin" ? "score margin per 60 minutes" : metricPresentation(metric).label.toLowerCase();
+  const chartValueLabel = value => metric === "margin" ? `${formatSigned(value, 1)} / 60` : metricValueLabel(value, metric);
+  const outcomeValue = player => metric === "win" ? player.winRate * 100
+    : metric === "margin" ? player.onFieldMarginPer60
+      : metric === "attemptsFor" ? player.attemptsForPer60
+        : metric === "attemptsAgainst" ? player.attemptsAgainstPer60
+          : player.attemptDifferentialPer60;
+  const points = players.filter(player => player.averageMinutes > 0 && Number.isFinite(outcomeValue(player))).map(player => ({
+    name: player.name,
+    minutes: player.averageMinutes,
+    outcome: outcomeValue(player)
+  }));
+  if (!points.length) return `<div class="time-outcome-empty">Record player minutes to build the season relationship graph.</div>`;
+
+  const left = 62, right = 700, top = 24, bottom = 250;
+  const maxMinutes = Math.max(5, Math.ceil(Math.max(...points.map(point => point.minutes)) / 5) * 5);
+  let minOutcome = Math.min(...points.map(point => point.outcome));
+  let maxOutcome = Math.max(...points.map(point => point.outcome));
+  const outcomePadding = Math.max(metric === "win" ? 5 : .5, (maxOutcome - minOutcome) * .16);
+  minOutcome -= outcomePadding;
+  maxOutcome += outcomePadding;
+  const x = minutes => left + minutes / maxMinutes * (right - left);
+  const y = outcome => bottom - (outcome - minOutcome) / (maxOutcome - minOutcome) * (bottom - top);
+  const meanMinutes = points.reduce((sum, point) => sum + point.minutes, 0) / points.length;
+  const meanOutcome = points.reduce((sum, point) => sum + point.outcome, 0) / points.length;
+  const denominator = points.reduce((sum, point) => sum + (point.minutes - meanMinutes) ** 2, 0);
+  const slope = denominator ? points.reduce((sum, point) => sum + (point.minutes - meanMinutes) * (point.outcome - meanOutcome), 0) / denominator : 0;
+  const intercept = meanOutcome - slope * meanMinutes;
+  const firstMinutes = Math.min(...points.map(point => point.minutes));
+  const lastMinutes = Math.max(...points.map(point => point.minutes));
+  const initials = name => name.split(/\s+/).slice(0, 2).map(part => part[0] || "").join("").toUpperCase();
+  const yTicks = [maxOutcome, (minOutcome + maxOutcome) / 2, minOutcome];
+  const trend = points.length > 1 && lastMinutes > firstMinutes
+    ? `<line class="time-outcome-trend" x1="${x(firstMinutes)}" y1="${y(intercept + slope * firstMinutes)}" x2="${x(lastMinutes)}" y2="${y(intercept + slope * lastMinutes)}"></line>`
+    : "";
+
+  return `<div class="time-outcome-chart-head"><div><strong>Season relationship</strong><span>Average time on field per appearance vs ${escapeHtml(chartMetricLabel)}</span></div><em>${actualReady ? "Your season" : "Demo preview"}</em></div><div class="time-outcome-chart"><svg viewBox="0 0 720 292" role="img" aria-label="Average player time on field compared with ${escapeHtml(chartMetricLabel)}">
+    ${yTicks.map((tick, index) => { const tickY = top + index * (bottom - top) / 2; return `<line class="time-outcome-grid" x1="${left}" y1="${tickY}" x2="${right}" y2="${tickY}"></line><text class="time-outcome-axis" x="52" y="${tickY + 4}" text-anchor="end">${escapeHtml(chartValueLabel(tick))}</text>`; }).join("")}
+    <line class="time-outcome-axis-line" x1="${left}" y1="${bottom}" x2="${right}" y2="${bottom}"></line>
+    ${[0, maxMinutes / 2, maxMinutes].map(minutes => `<text class="time-outcome-axis" x="${x(minutes)}" y="271" text-anchor="middle">${Math.round(minutes)}m</text>`).join("")}
+    ${trend}
+    ${points.map(point => `<g class="time-outcome-point" transform="translate(${x(point.minutes)} ${y(point.outcome)})"><title>${escapeHtml(`${point.name}: ${point.minutes.toFixed(1)} average min, ${chartValueLabel(point.outcome)}`)}</title><circle r="10"></circle><text y="3" text-anchor="middle">${escapeHtml(initials(point.name))}</text></g>`).join("")}
+    <text class="time-outcome-x-label" x="${(left + right) / 2}" y="289" text-anchor="middle">Average minutes on field per appearance</text>
+  </svg></div><p class="time-outcome-chart-caption">Each point is a player; the line shows the season trend. This is an observed association, not proof that playing more or fewer minutes caused the outcome.</p>`;
+}
+
+function unlockFooter(readiness, detail) {
+  return `<div class="unlock-footer ${readiness.ready ? "ready" : ""}"><span class="lock-mark">${readiness.ready ? "✓" : "○"}</span><div><strong>${readiness.ready ? "Report unlocked" : `${readiness.progress}% toward unlock`}</strong><small>${readiness.ready ? detail : `${readiness.needs}. ${detail}`}</small></div>${readiness.ready ? "" : `<span class="mini-progress"><i style="width:${readiness.progress}%"></i></span>`}</div>`;
+}
+
+function factorReportHtml(metric, filter) {
+  const report = DEMO_FACTOR_REPORTS[metric] || DEMO_FACTOR_REPORTS.win;
+  const factorKinds = { player: "Player", line: "Player + line", position: "Player + position" };
+  const factors = report.factors.filter(factor => filter === "all" || factor.kind === factorKinds[filter]);
+  const strongest = factors[0] || report.factors[0];
+  const max = Math.max(1, ...factors.flatMap(factor => [Math.abs(factor.low), Math.abs(factor.high)]));
+  const effect = factorEffectLabel(report, strongest.value);
+  const favorable = strongest.value * report.favorable >= 0;
+  return `<div class="factor-spotlight"><div><span>Strongest supported factor · ${escapeHtml(report.label)}</span><h4>${escapeHtml(strongest.name)}</h4><p>${escapeHtml(strongest.detail)} · 80% credible range ${factorEffectLabel(report, strongest.low)} to ${factorEffectLabel(report, strongest.high)}</p></div><strong class="${favorable ? "positive-text" : "negative-text"}">${effect}</strong></div>
+    <div class="factor-table-head"><span>Factor</span><span>Estimated effect &amp; 80% credible range</span><span>Signal</span></div>
+    <div class="factor-ranking">${factors.map((factor, index) => {
+      const lowPosition = 50 + factor.low / max * 45;
+      const highPosition = 50 + factor.high / max * 45;
+      const estimatePosition = 50 + factor.value / max * 45;
+      const isFavorable = factor.value * report.favorable >= 0;
+      return `<article><span class="factor-rank">${index + 1}</span><div class="factor-name"><strong>${escapeHtml(factor.name)}</strong><small><em>${escapeHtml(factor.kind)}</em>${escapeHtml(factor.detail)}</small></div><div class="factor-estimate"><span class="credible-scale"><i style="left:${Math.min(lowPosition, highPosition)}%;width:${Math.abs(highPosition - lowPosition)}%"></i><b class="${isFavorable ? "favorable" : "unfavorable"}" style="left:${estimatePosition}%"></b></span><strong class="${isFavorable ? "positive-text" : "negative-text"}">${factorEffectLabel(report, factor.value)}</strong></div><span class="evidence-chip ${factor.evidence.toLowerCase()}">${escapeHtml(factor.evidence)}</span></article>`;
+    }).join("")}</div>
+    <p class="factor-caption">${escapeHtml(report.description)}. The dot is the posterior estimate; the line shows the range of plausible effects. Ranges crossing the center line remain uncertain.</p>`;
+}
+
+function factorEffectLabel(report, value) {
+  const digits = report.unit === "pts" ? 0 : 1;
+  return `${formatSigned(value, digits)} ${report.unit}`;
+}
+
+function bindAnalysisControls(analysis) {
+  document.querySelectorAll("[data-playing-time-report] [data-playing-time-view]").forEach(button => button.addEventListener("click", () => {
+    const controls = button.closest("[data-playing-time-report]");
+    controls.querySelectorAll("[data-playing-time-view]").forEach(item => item.classList.toggle("active", item === button));
+    $("#playing-time-list").innerHTML = playingTimeListHtml(analysis.readiness.playingTime.ready && analysis.players.length ? analysis.players : DEMO_ANALYSIS.players, button.dataset.playingTimeView);
+  }));
+  document.querySelectorAll("[data-category-report] [data-metric-key]").forEach(button => button.addEventListener("click", () => {
+    const controls = button.closest("[data-category-report]");
+    const category = controls.dataset.categoryReport;
+    controls.querySelectorAll("[data-metric-key]").forEach(item => item.classList.toggle("active", item === button));
+    $(`#category-explorer-${category}`).innerHTML = categoryOutcomeHtml(analysis, category, button.dataset.metricKey);
+  }));
+  document.querySelectorAll("[data-analysis-method-link]").forEach(button => button.addEventListener("click", () => openAnalysisMethod(analysis)));
+}
+
+function formatSigned(value, digits = 0) {
+  const rounded = Number(value).toFixed(digits);
+  return `${value > 0 ? "+" : ""}${rounded}`;
 }
 
 function restoreMatch() {
@@ -768,6 +1261,7 @@ function openDeleteMatch() {
     $("#setup-view").classList.remove("hidden");
     $("#team-dashboard").classList.remove("hidden");
     $("#season-analysis-panel").classList.add("hidden");
+    $("#analysis-method-panel").classList.add("hidden");
     await renderTeamDashboard();
     setSaveStatus("Match deleted");
   });
@@ -780,6 +1274,7 @@ async function returnToTeam() {
   $("#setup-view").classList.remove("hidden");
   $("#team-dashboard").classList.remove("hidden");
   $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
   await renderTeamDashboard();
 }
 
@@ -886,6 +1381,13 @@ function renderReportDetails() {
   const matchMs = state.config.periodCount * state.config.periodMinutes * 60_000;
   const timeline = activeTimeline(events);
   const goals = timeline.filter(event => ["goal_for", "goal_against"].includes(event.type));
+  const attempts = timeline.filter(event => event.type === "goal_attempt");
+  const attemptsFor = attempts.filter(event => event.payload?.team !== "against").length;
+  const attemptsAgainst = attempts.length - attemptsFor;
+  const attemptMax = Math.max(1, attemptsFor, attemptsAgainst);
+  const lineupChanges = timeline.filter(event => event.type === "player_moved").length;
+  const result = state.scoreFor > state.scoreAgainst ? "Win" : state.scoreFor < state.scoreAgainst ? "Loss" : "Draw";
+  $("#match-report-summary").innerHTML = `<article><span>${state.completed ? "Result" : "Current result"}</span><strong>${state.scoreFor}–${state.scoreAgainst}</strong><small>${result}</small></article><article><span>Played</span><strong>${formatMinutes(state.elapsedMs)}</strong><small>${state.config.periodCount} × ${state.config.periodMinutes} min format</small></article><article><span>Lineup changes</span><strong>${lineupChanges}</strong><small>Substitutions and moves</small></article><article><span>Attempt diff.</span><strong class="${attemptsFor >= attemptsAgainst ? "positive-text" : "negative-text"}">${attempts.length ? formatSigned(attemptsFor - attemptsAgainst) : "—"}</strong><small>${attempts.length ? `${attemptsFor} for · ${attemptsAgainst} against` : "No attempts recorded"}</small></article>`;
   $("#goal-lineups").innerHTML = goals.map(goal => {
     const eventsThroughGoal = timeline.filter(event => event.gameTimeMs < goal.gameTimeMs || (event.gameTimeMs === goal.gameTimeMs && event.sequence <= goal.sequence));
     const atGoal = projector.project(eventsThroughGoal, goal.gameTimeMs);
@@ -896,6 +1398,7 @@ function renderReportDetails() {
     const assist = assistEvent?.payload.playerId ? atGoal.players[assistEvent.payload.playerId]?.name : null;
     return `<article class="goal-lineup"><span class="goal-icon ${goal.type}">${goal.type === "goal_for" ? "+" : "-"}</span><div><strong>${goal.type === "goal_for" ? "Goal for" : "Goal against"} · ${formatClock(displayedGameTime(events, goal.gameTimeMs, goal.sequence))}${scorer ? ` · ${escapeHtml(scorer)} scored` : ""}${assist ? ` · ${escapeHtml(assist)} assisted` : ""}</strong><small>${escapeHtml(players || "No players recorded on field")}</small></div></article>`;
   }).join("") || "<p class='hint'>Score events will show the exact on-field players here.</p>";
+  $("#attempts-report").innerHTML = attempts.length ? `<div class="match-attempt-bars"><article><div><span>${escapeHtml(state.config.team)}</span><strong>${attemptsFor}</strong></div><i><b style="width:${attemptsFor / attemptMax * 100}%"></b></i></article><article class="against"><div><span>${escapeHtml(state.config.opponent)}</span><strong>${attemptsAgainst}</strong></div><i><b style="width:${attemptsAgainst / attemptMax * 100}%"></b></i></article></div><p class="hint">Attempts are associated with the lineup on the field when each event was recorded.</p>` : "<p class='hint'>Use the Attempt buttons during the match to compare attacking pressure. Attempt tracking is optional.</p>";
   $("#minutes-report").innerHTML = Object.values(state.players).sort((a, b) => b.totalMs - a.totalMs).map(p => `<article class="minute-card"><div class="minute-top"><strong>${escapeHtml(p.name)}</strong><strong>${formatMinutes(p.totalMs)}</strong></div><div class="bar"><span style="width:${Math.min(100, p.totalMs / matchMs * 100)}%"></span></div><small>${Object.entries(p.positionMs).map(([pos, ms]) => `${escapeHtml(positionName(pos))} ${formatMinutes(ms)}`).join(" · ") || "No field time yet"}${p.goalkeeperMs ? ` · GK ${formatMinutes(p.goalkeeperMs)}` : ""}</small></article>`).join("");
   $("#stints-report").innerHTML = state.stints.map(stint => `<div class="stint-row"><strong>${formatClock(stint.startMs)}–${formatClock(stint.endMs)}</strong><span>${stint.goalsFor}–${stint.goalsAgainst}</span><span>${Object.entries(stint.field).map(([pos, id]) => `${nameOf(id)} (${shortPosition(pos)})`).join(", ")}</span></div>`).join("") || "<p class='hint'>Stints appear after the clock advances.</p>";
 }

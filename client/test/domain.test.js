@@ -10,6 +10,7 @@ import { matchIdsForTeam } from "../src/domain/team.js";
 import { displayedGameTime } from "../src/domain/game-time.js";
 import { mainMenuMatchStatus, STALE_PAUSE_MS } from "../src/domain/match-status.js";
 import { createId } from "../src/domain/id.js";
+import { analyzeTeam } from "../src/domain/analytics.js";
 
 const matchId = "match-1";
 const roster = ["Alex", "Blair", "Casey"].map((name, index) => ({ playerId: `p${index + 1}`, name, status: "available" }));
@@ -178,6 +179,28 @@ test("a layout change updates the available position slots", () => {
   assert.deepEqual(state.config.positions, ["forward_striker", "gk"]);
 });
 
+test("formation changes split stints and formation outcome analysis", () => {
+  const created = { ...base[0], payload: { ...base[0].payload, layoutName: "Opening shape" } };
+  const goal = event(4, "goal_for", 300_000);
+  const changed = event(5, "layout_changed", 450_000, { name: "Closing shape", positions: ["forward_striker", "gk"] });
+  const attempt = event(6, "goal_attempt", 600_000, { team: "for" });
+  const completed = event(7, "match_completed", 900_000);
+  const matchEvents = [created, ...base.slice(1), goal, changed, attempt, completed];
+  const matchState = new LineupProjector().project(matchEvents, 900_000);
+  const analysis = analyzeTeam([{ events: matchEvents, state: matchState }]);
+
+  assert.deepEqual(matchState.stints.map(stint => stint.layoutName), ["Opening shape", "Closing shape"]);
+  assert.deepEqual(matchState.stints.map(stint => stint.durationMs), [450_000, 450_000]);
+  const opening = analysis.formations.find(formation => formation.name === "Opening shape");
+  const closing = analysis.formations.find(formation => formation.name === "Closing shape");
+  assert.equal(opening.goalsFor, 1);
+  assert.equal(opening.completedAppearances, 1);
+  assert.ok(opening.smoothedMarginPer60 > 4 && opening.smoothedMarginPer60 < opening.marginPer60);
+  assert.equal(closing.attemptsFor, 1);
+  assert.equal(closing.completedAppearances, 1);
+  assert.ok(closing.smoothedAttemptsForPer60 > 4 && closing.smoothedAttemptsForPer60 < closing.attemptsForPer60);
+});
+
 test("a player marked not here disappears from the match bench and can be restored", () => {
   const blank = [
     base[0],
@@ -238,6 +261,97 @@ test("goal attempts for both teams are logged without changing the score", () =>
   assert.equal(state.scoreFor, 0);
   assert.equal(state.scoreAgainst, 0);
   assert.deepEqual(activeTimeline([...base, ...attempts]).slice(-2).map(item => item.payload.team), ["for", "against"]);
+});
+
+test("team analysis unlocks progressively and attributes stint outcomes", () => {
+  const completed = event(6, "match_completed", 900_000);
+  const attemptFor = event(4, "goal_attempt", 120_000, { team: "for" });
+  const goal = event(5, "goal_for", 300_000);
+  const matchEvents = [...base, attemptFor, goal, completed];
+  const matchState = new LineupProjector().project(matchEvents, 900_000);
+  const analysis = analyzeTeam([{ events: matchEvents, state: matchState }]);
+  assert.equal(analysis.matches, 1);
+  assert.equal(analysis.wins, 1);
+  assert.equal(analysis.attemptsFor, 1);
+  assert.equal(analysis.attemptsMargin, 1);
+  assert.equal(analysis.readiness.playingTime.ready, true);
+  assert.equal(analysis.readiness.attempts.ready, true);
+  assert.equal(analysis.readiness.fatigue.ready, false);
+  assert.equal(analysis.readiness.impact.ready, false);
+  assert.equal(analysis.readyCount, 2);
+  assert.equal(analysis.outcomeReadyCount, 5);
+  assert.equal(analysis.outcomeReportReadyCount, 1);
+  assert.equal(analysis.outcomeReportPartialCount, 0);
+  assert.equal(analysis.outcomeReadiness.team.attemptsMargin.ready, true);
+  assert.equal(analysis.players.find(player => player.playerId === "p2").onFieldMarginPer60, 4);
+  const playerPosition = analysis.playerPositions.find(item => item.playerId === "p2");
+  assert.equal(playerPosition.marginPer60, 4);
+  assert.equal(playerPosition.winRate, 1);
+  assert.equal(playerPosition.scoreMargin, 1);
+  assert.equal(playerPosition.attemptsForPer60, 4);
+  assert.equal(playerPosition.attemptDifferentialPer60, 4);
+  const playerLine = analysis.playerLines.find(item => item.playerId === "p2" && item.line === "Forward");
+  assert.equal(playerLine.winRate, 1);
+  assert.equal(playerLine.attemptsForPer60, 4);
+  assert.equal(playerLine.attemptDifferentialPer60, 4);
+  assert.equal(analysis.lineups.length, 1);
+  assert.equal(analysis.lineups[0].label, "Alex · Blair");
+  assert.equal(analysis.lineups[0].winRate, 1);
+  assert.equal(analysis.lineups[0].attemptsForPer60, 4);
+  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].marginPer60, 4);
+  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].attemptsForPer60, 4);
+  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].attemptDifferentialPer60, 4);
+  assert.equal(analysis.playerTime[0].exposureMs, 30 * 60_000);
+  assert.equal(analysis.playerTime[0].goalsFor, 2);
+  assert.equal(analysis.playerTime[0].marginPer60, 4);
+  const threeMatchAnalysis = analyzeTeam(Array.from({ length: 3 }, () => ({ events: matchEvents, state: matchState })));
+  assert.equal(threeMatchAnalysis.readiness.fatigue.ready, true);
+  assert.equal(threeMatchAnalysis.readiness.playerTime.ready, false);
+  assert.equal(threeMatchAnalysis.readiness.impact.ready, false);
+  const fiveMatchAnalysis = analyzeTeam(Array.from({ length: 5 }, () => ({ events: matchEvents, state: matchState })));
+  assert.equal(fiveMatchAnalysis.outcomeReadiness.fatigue.win.ready, true);
+  assert.equal(fiveMatchAnalysis.outcomeReadiness.playerTime.win.ready, false);
+  assert.equal(fiveMatchAnalysis.outcomeReadiness.impact.win.ready, true);
+
+  const frequentAttempts = Array.from({ length: 7 }, (_, index) => event(4 + index, "goal_attempt", 60_000 + index * 60_000, { team: index % 3 ? "for" : "against" }));
+  const attemptRichEvents = [...base, ...frequentAttempts, event(11, "match_completed", 900_000)];
+  const attemptRichState = new LineupProjector().project(attemptRichEvents, 900_000);
+  const attemptRichAnalysis = analyzeTeam(Array.from({ length: 3 }, () => ({ events: attemptRichEvents, state: attemptRichState })));
+  assert.equal(attemptRichAnalysis.outcomeReadiness.impact.attemptsFor.ready, true);
+  assert.equal(attemptRichAnalysis.outcomeReadiness.impact.win.ready, false);
+  assert.equal(attemptRichAnalysis.outcomeReadiness.fatigue.attemptsAgainst.ready, true);
+  assert.equal(attemptRichAnalysis.outcomeReadiness.fatigue.attemptsMargin.ready, true);
+  assert.equal(attemptRichAnalysis.outcomeReadiness.playerTime.attemptsMargin.ready, false);
+});
+
+test("playing-time analysis supports per-game averages and season totals", () => {
+  const firstState = new LineupProjector().project(base, 15 * 60_000);
+  const secondState = new LineupProjector().project(base, 10 * 60_000);
+  const analysis = analyzeTeam([{ events: base, state: firstState }, { events: base, state: secondState }]);
+  const player = analysis.players.find(item => item.playerId === "p2");
+
+  assert.equal(player.appearances, 2);
+  assert.equal(player.averageMinutes, 12.5);
+  assert.equal(player.seasonMinutes, 25);
+});
+
+test("time-on-field outcomes use each player's accumulated minutes instead of the match clock", () => {
+  const substitute = moved(4, 20 * 60_000,
+    { playerId: "p2", from: "forward_striker", to: "off_field" },
+    { playerId: "p3", from: "off_field", to: "forward_striker" });
+  const goal = event(5, "goal_for", 25 * 60_000);
+  const completed = event(6, "match_completed", 40 * 60_000);
+  const matchEvents = [...base, substitute, goal, completed];
+  const matchState = new LineupProjector().project(matchEvents, 40 * 60_000);
+  const analysis = analyzeTeam([{ events: matchEvents, state: matchState }]);
+  const substituteTiming = analysis.playerTiming.find(player => player.playerId === "p3");
+
+  assert.deepEqual(substituteTiming.buckets.map(bucket => bucket.label), ["First 15 on field", "Next 15 on field", "After 30 on field"]);
+  assert.equal(substituteTiming.buckets[0].exposureMs, 15 * 60_000);
+  assert.equal(substituteTiming.buckets[1].exposureMs, 5 * 60_000);
+  assert.equal(substituteTiming.buckets[0].goalsFor, 1);
+  assert.equal(substituteTiming.buckets[1].goalsFor, 0);
+  assert.equal(substituteTiming.buckets[0].marginPer60, 4);
 });
 
 test("deleting a goal recalculates the score while deleting an assist does not", () => {

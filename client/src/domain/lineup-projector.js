@@ -45,7 +45,8 @@ export class LineupProjector {
       if (end > stintStart && Object.keys(state.field).length) {
         state.stints.push({ startMs: stintStart, endMs: end, durationMs: end - stintStart,
           goalsFor: stintGoalsFor, goalsAgainst: stintGoalsAgainst,
-          field: structuredClone(state.field), goalkeeperId: state.goalkeeperId });
+          field: structuredClone(state.field), goalkeeperId: state.goalkeeperId,
+          layoutName: config.layoutName || "Custom" });
       }
       stintStart = end;
       stintGoalsFor = 0;
@@ -69,6 +70,7 @@ export class LineupProjector {
         case "period_ended": state.periodRunning = false; break;
         case "layout_changed":
           if (Array.isArray(p.positions) && p.positions.length === config.playersOnField) {
+            closeStint(event.gameTimeMs);
             config.positions = structuredClone(p.positions);
             config.layoutName = p.name || "Custom";
           }

@@ -23,7 +23,7 @@
     <section id="setup-view" class="view team-page">
       <div class="team-hero">
         <div><div class="eyebrow">Team</div><input id="team-name-input" class="team-name-input" value="Team1" aria-label="Team name"></div>
-        <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams ▾</button><button id="season-analysis" class="secondary">Season analysis →</button></div>
+        <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams ▾</button></div>
       </div>
       <section id="no-team-panel" class="no-team-panel hidden"><h2>No teams yet</h2><p class="hint">Add a team to create players and matches.</p><button id="add-first-team" class="primary">+ Add team</button></section>
       <section id="team-dashboard">
@@ -34,14 +34,44 @@
               <label>Format<select id="team-format"><option value="5">5v5</option><option value="7" selected>7v7</option><option value="9">9v9</option><option value="11">11v11</option></select></label>
               <button id="create-new-match" class="primary">＋ New match</button>
             </div>
+            <button id="analysis-card" class="analysis-entry-card" type="button">
+              <span class="analysis-entry-icon" aria-hidden="true">↗</span>
+              <span><small><span>Team intelligence</span><em id="analysis-new-badge" class="analysis-new-badge hidden">New</em></small><strong>Reports &amp; analysis</strong><em id="analysis-card-status">Demo reports ready to preview</em></span>
+              <span class="analysis-entry-arrow" aria-hidden="true">→</span>
+            </button>
             <div class="section-heading"><div><span class="team-icon">◷</span><h2>Matches</h2></div></div>
             <div id="team-matches" class="match-list"></div>
           </div>
         </div>
       </section>
       <section id="season-analysis-panel" class="hidden">
-        <div class="panel-head"><div><div class="eyebrow">Team</div><h2>Season analysis</h2></div><button id="back-to-team" class="secondary">← Team</button></div>
+        <div class="panel-head analysis-panel-head"><div><div class="eyebrow">Team intelligence</div><h2>Reports &amp; analysis</h2><p>See how your coaching decisions connect to playing time and results.</p></div><button id="back-to-team" class="secondary">← Team</button></div>
         <div id="season-summary" class="season-summary"></div>
+      </section>
+      <section id="analysis-method-panel" class="hidden method-page">
+        <div class="panel-head analysis-panel-head"><div><div class="eyebrow">About the analysis</div><h2>How CoachJD learns</h2><p>What is collected, how it is calculated, and what the results mean.</p></div><button id="back-to-analysis" class="secondary">← Analysis</button></div>
+        <div id="method-data-summary" class="method-data-summary"></div>
+        <section class="method-card">
+          <span class="eyebrow">1 · Collected during matches</span><h3>Coach actions and team outcomes</h3>
+          <div class="method-data-grid"><article><strong>Lineup &amp; position</strong><p>Who entered, who left, each named position, and the exact game time of every change.</p></article><article><strong>Outcomes</strong><p>Goals for and against, final result and margin, plus optional attempts for and against.</p></article><article><strong>Context</strong><p>Match format and opponent today; kickoff time and weather can be added later.</p></article></div>
+          <p class="method-boundary"><strong>Not required:</strong> passes, assists, tackles, blocks, or tactical player actions.</p>
+        </section>
+        <section class="method-card">
+          <span class="eyebrow">2 · Reconstructed locally</span><h3>The event timeline becomes lineup stints</h3>
+          <div class="stint-example"><span>00:00</span><i></i><strong>Starting lineup</strong><span>11:24</span><i></i><strong>Substitution</strong><span>18:06</span><i></i><strong>Goal for</strong></div>
+          <p>Every uninterrupted lineup is assigned its duration, players, positions, goals, and attempts. Editing the timeline recalculates these stints automatically.</p>
+          <div class="method-data-grid formation-method-grid"><article><strong>Formation stint averages</strong><p>Formation goals and attempts are totaled across exact stints, then divided by total formation minutes. Longer stints receive proportionally more weight.</p></article><article><strong>Bayesian small-data smoothing</strong><p>With only a few games, formation rates are pulled toward the team's overall rate. The pull is strongest for formations with the fewest minutes and fades as evidence grows.</p></article><article><strong>Interpretation boundary</strong><p>Smoothing reduces unstable early extremes but cannot manufacture evidence or prove that a formation caused the result.</p></article></div>
+        </section>
+        <section class="method-card">
+          <span class="eyebrow">3 · Calculated by the analysis server</span><h3>Bayesian hierarchical Poisson models</h3>
+          <div class="method-model-flow"><article><span>Input</span><strong>Lineup stints + duration</strong></article><b>→</b><article><span>Rate models</span><strong>Goals and attempts, for + against</strong></article><b>→</b><article><span>Outputs</span><strong>Win rate, margin, strongest factors</strong></article></div>
+          <p>Goals for and against are estimated separately. Small samples are partially pooled toward the team average, reducing extreme early rankings. Win rate and margin are then derived from those rates. Attempts use parallel models only when the coach records them consistently.</p>
+        </section>
+        <section class="method-card">
+          <span class="eyebrow">4 · Interpreted cautiously</span><h3>Association, uncertainty, and readiness</h3>
+          <div class="method-data-grid"><article><strong>Posterior estimate</strong><p>The model's best current estimate of the factor's effect.</p></article><article><strong>Credible range</strong><p>The plausible range around that estimate. Wider ranges mean more uncertainty.</p></article><article><strong>Report unlocks</strong><p>Detailed reports wait for enough matches, outcomes, variation, and position minutes.</p></article></div>
+          <p class="method-boundary"><strong>Important:</strong> CoachJD identifies modeled associations, not proof that a player caused a result. It recommends arrangements, not player actions.</p>
+        </section>
       </section>
     </section>
 
@@ -88,7 +118,9 @@
 
       <section id="report-panel" class="tab-panel hidden">
         <div class="panel-head"><div><div class="eyebrow">Match</div><h2>Match analysis</h2></div><div class="report-actions"><button id="export-json" class="secondary">JSON</button><button id="export-csv" class="secondary">CSV</button></div></div>
+        <div id="match-report-summary" class="match-report-summary"></div>
         <h2>Goals</h2><div id="goal-lineups" class="goal-lineups"></div>
+        <h2>Attempts</h2><div id="attempts-report" class="attempts-report"></div>
         <h2>Playing time</h2>
         <div id="minutes-report" class="minutes-report"></div>
         <h2>Lineup stints</h2><div id="stints-report" class="stints-report"></div>

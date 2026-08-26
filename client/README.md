@@ -2,7 +2,7 @@
 
 CoachJD is an offline-first, event-sourced live soccer tracker built as a Vite-powered JavaScript progressive web app. The product requirements remain at `../LIVE_SOCCER_TRACKER_REQUIREMENTS.md`; this directory contains the complete client application.
 
-The application is entirely static at runtime. Match setup, the clock, events, projections, corrections, reports, and exports all run in the browser and persist in IndexedDB. A future backup and model-training service will be a separate project.
+The live tracker remains static and offline-first. Match setup, the clock, events, projections, corrections, quick reports, and exports run in the browser and persist in IndexedDB. Deep Bayesian analysis can optionally be requested from a separate server.
 
 ## Run locally
 
@@ -26,6 +26,10 @@ Run the domain tests with:
 ```powershell
 node --test
 ```
+
+## Analysis status
+
+The analysis page shows model status and the last-updated time but does not expose a manual analysis-request control. Demo model output remains available until server-produced results are connected.
 
 ## What is included
 
@@ -51,6 +55,9 @@ node --test
 - Pitch-mounted score controls sit beside the attacking and defending goals; More is in the top-right header
 - Match analysis ties each goal for/against to the exact on-field player-position lineup
 - Season analysis link from the team page
+- Progressive reports with model status, last-updated time, and a linked methodology page
+- Pooled time-on-field outcome trends that unlock early, plus higher-evidence player-specific time reports
+- Formation outcome reporting based on exact formation stints, including changes made during a match
 - Monotonic live clock with period controls and manual correction
 - One monotonic Start/Stop tracking clock; halftime pauses it and the second half continues from the same elapsed value without resets or clock corrections
 - One `player_moved` event covers entering, leaving, field positions, goalkeeper, not-here status, swaps, substitutions, and clearing the field
@@ -73,4 +80,4 @@ Domain behavior is kept separate from rendering:
 
 IndexedDB is the durable browser adapter. A future Capacitor native wrapper can provide a SQLite `EventStore` implementation without changing the domain or UI behavior.
 
-The future server can expose backup and training APIs independently. This repository contains no server runtime or API routes.
+The analysis server remains an independent deployment. This repository contains the analysis status UI but no server runtime or API routes.
