@@ -9,6 +9,8 @@ import { displayedGameTime } from "./domain/game-time.js";
 import { mainMenuMatchStatus } from "./domain/match-status.js";
 import { createId } from "./domain/id.js";
 import { analyzeTeam } from "./domain/analytics.js";
+import { recentSubstitutionChanges } from "./domain/substitution-highlight.js";
+import { groupLineupStints } from "./domain/lineup-stint.js";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -19,10 +21,19 @@ const FORMATIONS = {
   8: [{ name: "3-2-2", shape: [3, 2, 2] }, { name: "2-3-2", shape: [2, 3, 2] }, { name: "3-3-1", shape: [3, 3, 1] }],
   9: [{ name: "3-3-2", shape: [3, 3, 2] }, { name: "2-3-3", shape: [2, 3, 3] }, { name: "3-2-3", shape: [3, 2, 3] }],
   10: [{ name: "3-3-3", shape: [3, 3, 3] }, { name: "4-3-2", shape: [4, 3, 2] }, { name: "3-4-2", shape: [3, 4, 2] }],
-  11: [{ name: "4-3-3", shape: [4, 3, 3] }, { name: "4-4-2", shape: [4, 4, 2] }, { name: "3-5-2", shape: [3, 5, 2] }]
+  11: [
+    { name: "4-3-3", shape: [4, 3, 3] },
+    { name: "4-4-2", shape: [4, 4, 2] },
+    { name: "3-5-2", shape: [3, 5, 2] },
+    { name: "4-2-3-1", shape: [4, 2, 3, 1], lines: [["defense", 4], ["defensive-mid", 2], ["attacking-mid", 3], ["attack", 1]] },
+    { name: "4-1-2-3", shape: [4, 1, 2, 3], lines: [["defense", 4], ["defensive-mid", 1], ["midfield", 2], ["attack", 3]] },
+    { name: "3-4-1-2", shape: [3, 4, 1, 2], lines: [["defense", 3], ["midfield", 4], ["attacking-mid", 1], ["attack", 2]] },
+    { name: "3-4-2-1", shape: [3, 4, 2, 1], lines: [["defense", 3], ["midfield", 4], ["attacking-mid", 2], ["attack", 1]] },
+    { name: "4-1-2-1-2", shape: [4, 1, 2, 1, 2], lines: [["defense", 4], ["defensive-mid", 1], ["midfield", 2], ["attacking-mid", 1], ["attack", 2]] }
+  ]
 };
-const defaults = Object.fromEntries(Object.entries(FORMATIONS).map(([size, layouts]) => [size, formationPositions(layouts[0].shape)]));
-const POSITIONS = [...new Set(Object.values(FORMATIONS).flatMap(layouts => layouts.flatMap(layout => formationPositions(layout.shape))))];
+const defaults = Object.fromEntries(Object.entries(FORMATIONS).map(([size, layouts]) => [size, layoutPositions(layouts[0])]));
+const POSITIONS = [...new Set(Object.values(FORMATIONS).flatMap(layouts => layouts.flatMap(layoutPositions)))];
 const SILENT_EVENT_TYPES = new Set([
   "player_moved",
   "layout_changed",
@@ -154,6 +165,8 @@ let teams = [];
 let readinessMatchId = null;
 let fieldWasFull = false;
 let stoppedFullPulse = false;
+let substitutionHighlightTimer = null;
+let recentSubstitutionState = { on: new Set(), off: new Set(), nextExpiryMs: null };
 
 document.addEventListener("DOMContentLoaded", init);
 
@@ -192,6 +205,7 @@ function bindStaticEvents() {
   $("#back-to-analysis").addEventListener("click", () => { $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden"); window.scrollTo(0, 0); });
   $("#team-matches").addEventListener("click", event => { const button = event.target.closest("[data-open-match]"); if (button) loadMatch(button.dataset.openMatch); });
   $("#clock-button").addEventListener("click", openClockAdjust);
+  $("#half-toggle").addEventListener("click", toggleHalf);
   $("#match-control").addEventListener("click", toggleClock);
   $("#score-for-button").onclick = event => { event.preventDefault(); event.stopPropagation(); openGoalFor(); };
   $("#goal-attempt-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_attempt", { team: "for" }).catch(showActionError); };
@@ -413,7 +427,7 @@ function teamAnalysisHtml(analysis) {
   const minutesReady = analysis.readiness.playingTime.ready && analysis.players.length;
   const readinessPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
   const readinessCategories = [["team", "Team"], ["impact", "Player"], ["lines", "Player position rank"], ["fatigue", "Time on field average"], ["formations", "Formation"], ["playerTime", "Time on field by player"], ["positions", "Player position name"]];
-  const readinessOutcomes = [["attemptsMargin", "Attempts margin"], ["attemptsAgainst", "Attempts against"], ["attemptsFor", "Attempts for"], ["margin", "Score margin"], ["win", "Win rate"]];
+  const readinessOutcomes = [["attemptsFor", "Attempts for"], ["attemptsAgainst", "Attempts against"], ["attemptsMargin", "Attempts margin"], ["win", "Win rate"], ["margin", "Score margin"]];
   const minutesSource = minutesReady ? analysis.players : DEMO_ANALYSIS.players;
   return `
     <section class="analysis-readiness-card">
@@ -445,7 +459,7 @@ function teamAnalysisHtml(analysis) {
 
     ${outcomeReportsHtml(analysis)}
 
-    <p class="analysis-method-note"><strong>How to read this:</strong> CoachJD connects who was on the field, where, and when with goals, results, and optional attempts. It recommends arrangements—not player actions—and stays cautious while samples are small.</p>`;
+    <p class="analysis-method-note"><strong>How to read this:</strong> LineUp JD connects who was on the field, where, and when with goals, results, and optional attempts. It recommends arrangements—not player actions—and stays cautious while samples are small.</p>`;
 }
 
 function sourcePill(ready) { return `<span class="source-pill ${ready ? "live" : "demo"}">${ready ? "Your data" : "Demo preview"}</span>`; }
@@ -472,7 +486,7 @@ function playingTimeListHtml(players, view) {
 }
 
 function outcomeReportsHtml(analysis) {
-  const metrics = ["attemptsMargin", "attemptsAgainst", "attemptsFor", "margin", "win"];
+  const metrics = ["attemptsFor", "attemptsAgainst", "attemptsMargin", "win", "margin"];
   const reports = [
     ["team", "By Team", "The team baseline across completed matches and tracked attempts."],
     ["impact", "By Player", "Which players have the strongest positive or negative effect while on the field."],
@@ -485,6 +499,7 @@ function outcomeReportsHtml(analysis) {
 
   return reports.map(([category, title, description]) => {
     const readyOutcomes = metrics.filter(metric => analysis.outcomeReadiness[category][metric].ready).length;
+    const activeMetric = metrics.find(metric => analysis.outcomeReadiness[category][metric].ready) || metrics[0];
     const reportStatus = readyOutcomes === metrics.length
       ? `<span class="source-pill live">Fully unlocked</span>`
       : readyOutcomes
@@ -492,19 +507,19 @@ function outcomeReportsHtml(analysis) {
         : `<span class="source-pill demo">Demo preview</span>`;
     return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}">
       <div class="analysis-report-head"><div><h3>${title}</h3><p>${description}</p></div><div class="report-head-tools">${reportStatus}</div></div>
-      ${outcomeMetricToggle(analysis, category)}
-      <div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, "attemptsMargin")}</div>
+      ${outcomeMetricToggle(analysis, category, activeMetric)}
+      <div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, activeMetric)}</div>
       ${reportModelNote(category === "team" ? "Basic averages" : category === "formations" ? "Bayesian-smoothed formation stint averages" : "Bayesian hierarchical Poisson")}
     </section>`;
   }).join("");
 }
 
-function outcomeMetricToggle(analysis, category, active = "attemptsMargin") {
-  const metrics = [["attemptsMargin", "Attempts margin"], ["attemptsAgainst", "Attempts against"], ["attemptsFor", "Attempts for"], ["margin", "Score margin"], ["win", "Win rate"]];
+function outcomeMetricToggle(analysis, category, active = "attemptsFor") {
+  const metrics = [["attemptsFor", "Attempts for"], ["attemptsAgainst", "Attempts against"], ["attemptsMargin", "Attempts margin"], ["win", "Win rate"], ["margin", "Score margin"]];
   return `<div class="breakdown-toggle outcome-metric-toggle" data-category-report="${category}" role="group" aria-label="Outcome shown in this report">${metrics.map(([key, label]) => {
     const readiness = analysis.outcomeReadiness[category][key];
     const demo = !readiness.ready;
-    return `<button class="${key === active ? "active " : ""}${demo ? "demo-preview" : "ready"}" type="button" data-metric-key="${key}" aria-label="${escapeHtml(`${label}${demo ? ", demo preview" : ", ready"}`)}" title="${escapeHtml(demo ? `Demo preview · ${readiness.needs}` : `${label} · your team data`)}">${label}</button>`;
+    return `<button class="${key === active ? "active " : ""}${demo ? "demo-preview" : "ready"}" type="button" data-metric-key="${key}" aria-label="${escapeHtml(`${label}${demo ? ", locked" : ", ready"}`)}" title="${escapeHtml(demo ? `Locked · ${readiness.needs}` : `${label} · your team data`)}" ${demo ? "disabled" : ""}>${label}</button>`;
   }).join("")}</div>`;
 }
 
@@ -753,7 +768,7 @@ function bindAnalysisControls(analysis) {
     controls.querySelectorAll("[data-playing-time-view]").forEach(item => item.classList.toggle("active", item === button));
     $("#playing-time-list").innerHTML = playingTimeListHtml(analysis.readiness.playingTime.ready && analysis.players.length ? analysis.players : DEMO_ANALYSIS.players, button.dataset.playingTimeView);
   }));
-  document.querySelectorAll("[data-category-report] [data-metric-key]").forEach(button => button.addEventListener("click", () => {
+  document.querySelectorAll("[data-category-report] [data-metric-key]:not(:disabled)").forEach(button => button.addEventListener("click", () => {
     const controls = button.closest("[data-category-report]");
     const category = controls.dataset.categoryReport;
     controls.querySelectorAll("[data-metric-key]").forEach(item => item.classList.toggle("active", item === button));
@@ -800,6 +815,8 @@ async function append(type, gameTimeMs = clock?.elapsedMs || 0, payload = {}, no
 function renderAt(elapsedMs) {
   if (!matchId) return;
   state = projector.project(events, elapsedMs);
+  recentSubstitutionState = recentSubstitutionChanges(state.timeline, Date.now());
+  scheduleSubstitutionHighlightRefresh();
   renderScoreboard();
   if (pointerDrag || nativeDragging) return;
   renderField(); renderBench(); renderUnavailable(); bindPlayerInteractions();
@@ -815,16 +832,23 @@ function renderScoreboard() {
   $("#score-for").textContent = state.scoreFor; $("#score-against").textContent = state.scoreAgainst;
   const gameClock = formatClock(displayedGameTime(events, state.elapsedMs));
   $("#clock-button").textContent = gameClock;
-  $("#compact-team-name").textContent = c.team;
-  $("#compact-opponent-name").textContent = c.opponent;
-  $("#compact-score-for").textContent = state.scoreFor;
-  $("#compact-score-against").textContent = state.scoreAgainst;
-  $("#compact-clock").textContent = gameClock;
-  const halfLabel = c.periodCount === 2 && state.currentPeriod ? (state.currentPeriod === 1 ? "First half" : "Second half") : state.currentPeriod ? `Period ${state.currentPeriod}` : "Ready";
-  $("#period-label").textContent = state.completed ? "Full time" : isBetweenPeriods() ? "Half time" : halfLabel;
   $("#live-status").textContent = state.completed ? "FINAL" : state.periodRunning ? "LIVE" : state.currentPeriod ? "PAUSED" : "READY";
   $("#live-status").style.color = state.periodRunning ? "#c9ff5b" : "#ff9d4d";
+  const halfToggle = $("#half-toggle");
+  const secondHalf = state.currentPeriod === 2;
+  halfToggle.classList.toggle("second-half", secondHalf);
+  halfToggle.classList.toggle("hidden", c.periodCount !== 2);
+  halfToggle.setAttribute("aria-checked", String(secondHalf));
+  halfToggle.setAttribute("aria-label", `Switch to ${secondHalf ? "first" : "second"} half`);
+  halfToggle.disabled = state.completed;
   renderMatchControls();
+}
+
+function scheduleSubstitutionHighlightRefresh() {
+  clearTimeout(substitutionHighlightTimer);
+  if (recentSubstitutionState.nextExpiryMs === null) return;
+  const delay = Math.max(0, recentSubstitutionState.nextExpiryMs - Date.now() + 20);
+  substitutionHighlightTimer = setTimeout(() => renderAt(clock?.elapsedMs ?? state.elapsedMs), delay);
 }
 
 function renderMatchControls() {
@@ -853,6 +877,7 @@ function isBetweenPeriods() {
 function renderField() {
   $("#field-count").textContent = `${state.fieldCount} / ${state.config.playersOnField}`;
   $("#clear-field").disabled = state.fieldCount === 0;
+  const recentChanges = recentSubstitutionState;
   const basePositions = activePositions();
   const positions = [...basePositions, ...Object.keys(state.field).filter(position => !basePositions.includes(position))];
   const renderPosition = (position, rowLength, index) => {
@@ -860,9 +885,11 @@ function renderField() {
     const column = positionColumn(position, rowLength, index);
     if (!id) return `<div class="empty-field-slot ${position === "gk" ? "keeper-slot" : ""}" style="grid-column:${column}" data-position="${escapeHtml(position)}"><span>＋</span><small>${escapeHtml(shortPosition(position))}</small></div>`;
     const p = state.players[id];
-    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(p.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(id, p.name))}</span><strong title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</strong><span class="player-time">${formatMinutes(p.currentStintMs)}</span></article>`;
+    const recentlyOn = recentChanges.on.has(id);
+    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""} ${recentlyOn ? "recently-on" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift${recentlyOn ? ", just moved on" : ""}`)}">${shirtHtml(id, p.name)}${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
+  $("#field").classList.toggle("dense-layout", bands.filter(band => positions.some(position => positionBand(position) === band)).length >= 5);
   $("#field").innerHTML = bands.map(band => {
     const row = positions.filter(position => positionBand(position) === band);
     return row.length ? `<div class="position-band position-band-${band}" style="grid-template-columns:repeat(${Math.max(3, row.length)},minmax(0,1fr))">${row.map((position, index) => renderPosition(position, row.length, index)).join("")}</div>` : "";
@@ -885,26 +912,29 @@ function openLayoutPicker() {
     const layout = layouts.find(item => item.name === button.dataset.layout);
     if (!layout) return;
     $("#action-dialog").close();
-    await append("layout_changed", clock.elapsedMs, { name: layout.name, positions: formationPositions(layout.shape) }, false);
+    await append("layout_changed", clock.elapsedMs, { name: layout.name, positions: layoutPositions(layout) }, false);
   };
 }
 
 function renderBench() {
+  const recentChanges = recentSubstitutionState;
   const offFieldTime = player => Math.max(0, state.elapsedMs - (state.players[player.playerId]?.lastExitedAt ?? state.elapsedMs));
   const players = state.bench.filter(Boolean).sort((a, b) => offFieldTime(b) - offFieldTime(a) || a.name.localeCompare(b.name));
   const playerTokens = players.map(player => {
     const offFieldMs = offFieldTime(player);
-    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(player.playerId, player.name))}</span><span class="player-time">${formatMinutes(offFieldMs)}</span></article>`;
+    const recentlyOff = recentChanges.off.has(player.playerId);
+    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-label="${escapeHtml(`${player.name}, resting ${formatMinutes(offFieldMs)}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}${playerTimeHtml(offFieldMs, "Time off field")}</article>`;
   }).join("");
   $("#bench").innerHTML = `${playerTokens}<button id="add-player" class="add-player-tile" type="button" aria-label="Add players"><span class="add-player-icon" aria-hidden="true">+</span></button><div id="unavailable" class="unavailable-zone" aria-label="Not here"></div>`;
 }
 
 function renderUnavailable() {
   const unavailable = (state.unavailable || []).filter(Boolean);
+  const recentChanges = recentSubstitutionState;
   const zone = $("#unavailable");
   zone.classList.toggle("has-players", unavailable.length > 0);
   zone.style.setProperty("--unavailable-columns", Math.min(unavailable.length + 1, 4));
-  const playerTokens = unavailable.map(player => `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-label="${escapeHtml(player.name)}"><span class="shirt-icon">${escapeHtml(shirtLabel(player.playerId, player.name))}</span></article>`).join("");
+  const playerTokens = unavailable.map(player => { const recentlyOff = recentChanges.off.has(player.playerId); return `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-label="${escapeHtml(`${player.name}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}</article>`; }).join("");
   zone.innerHTML = `<span class="unavailable-label">Not here</span>${playerTokens}`;
 }
 
@@ -1120,6 +1150,22 @@ async function toggleClock() {
   else { await append("clock_resumed", clock.elapsedMs); startClock(); }
 }
 
+async function toggleHalf() {
+  if (state.completed || state.config.periodCount !== 2) return;
+  const targetPeriod = state.currentPeriod === 2 ? 1 : 2;
+  const wasRunning = Boolean(clock?.running);
+  const toggle = $("#half-toggle");
+  toggle.disabled = true;
+  try {
+    await append("period_started", clock?.elapsedMs || 0, { period: targetPeriod }, false);
+    if (!wasRunning) await append("clock_paused", clock?.elapsedMs || 0, {}, false);
+  } catch (error) {
+    showActionError(error);
+  } finally {
+    toggle.disabled = state.completed;
+  }
+}
+
 function openClockAdjust() {
   const current = displayedGameTime(events, clock?.elapsedMs || 0);
   openDialog("Set game time", `<div class="dialog-fields"><label>Displayed game time (MM:SS)<input name="displayTime" inputmode="numeric" value="${formatClock(current)}" required autofocus></label><p class="hint">This changes only the displayed game clock. Player time and event logs keep their original tracking time.</p></div>`, async data => {
@@ -1141,7 +1187,7 @@ function openGoalFor(preselectedPlayerId = "") {
   const { onField, offField } = orderedScorerGroups(state.field, state.bench);
   const shirt = (playerId, detail) => {
     const name = nameOf(playerId);
-    return `<button type="button" class="goal-scorer ${playerId === preselectedPlayerId ? "selected" : ""}" data-scorer-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shirtLabel(playerId, name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></button>`;
+    return `<button type="button" class="goal-scorer ${playerId === preselectedPlayerId ? "selected" : ""}" data-scorer-id="${escapeHtml(playerId)}">${shirtHtml(playerId, name)}<strong>${escapeHtml(name)}</strong><small>${escapeHtml(detail)}</small></button>`;
   };
   const onFieldShirts = onField.map(playerId => { const position = Object.keys(state.field).find(item => state.field[item] === playerId); return shirt(playerId, shortPosition(position)); }).join("");
   const offFieldShirts = offField.map(playerId => shirt(playerId, "Off field")).join("");
@@ -1156,36 +1202,10 @@ function openGoalFor(preselectedPlayerId = "") {
     document.querySelectorAll("[data-scorer-id]").forEach(option => { option.disabled = true; });
     try {
       $("#action-dialog").close();
-      if (scorerId) openGoalAssist(scorerId, goalTimeMs);
-      else await append("goal_for", goalTimeMs);
+      await append("goal_for", goalTimeMs, scorerId ? { playerId: scorerId } : {});
     } catch (error) {
       $("#dialog-error").textContent = error.message;
       document.querySelectorAll("[data-scorer-id]").forEach(option => { option.disabled = false; });
-    }
-  };
-}
-
-function openGoalAssist(scorerId, goalTimeMs = clock.elapsedMs) {
-  const { onField } = orderedScorerGroups(state.field, state.bench);
-  const choices = onField.filter(playerId => playerId !== scorerId).map(playerId => {
-    const name = nameOf(playerId);
-    const position = Object.keys(state.field).find(item => state.field[item] === playerId);
-    return `<button type="button" class="goal-scorer" data-assist-id="${escapeHtml(playerId)}"><span class="shirt-icon">${escapeHtml(shirtLabel(playerId, name))}</span><strong>${escapeHtml(name)}</strong><small>${escapeHtml(shortPosition(position))}</small></button>`;
-  }).join("");
-  const noAssist = `<button type="button" class="goal-scorer unknown-scorer" data-assist-id=""><span class="shirt-icon">–</span><strong>No assist</strong><small>Unassisted</small></button>`;
-  openDialog("Who assisted?", `<div class="goal-scorer-list"><section class="goal-scorer-group"><div class="goal-scorer-grid">${choices}${noAssist}</div></section></div>`, null, false);
-  $("#dialog-body").onclick = async event => {
-    const button = event.target.closest("[data-assist-id]");
-    if (!button) return;
-    document.querySelectorAll("[data-assist-id]").forEach(option => { option.disabled = true; });
-    try {
-      const assistId = button.dataset.assistId || null;
-      await append("goal_for", goalTimeMs, { playerId: scorerId }, !assistId);
-      if (assistId) await append("assist_for", goalTimeMs, { playerId: assistId });
-      $("#action-dialog").close();
-    } catch (error) {
-      $("#dialog-error").textContent = error.message;
-      document.querySelectorAll("[data-assist-id]").forEach(option => { option.disabled = false; });
     }
   };
 }
@@ -1196,7 +1216,7 @@ function openPlayerMenu(playerId) {
   const onField = Object.values(state.field).includes(playerId);
   const unavailable = state.unavailable?.some(player => player.playerId === playerId);
   let actions = "";
-  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
+  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="assist">Assist by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
   else if (unavailable) actions += `<button type="button" class="secondary" data-player-action="restore">Move to off field</button>`;
   else actions += `<button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
   actions += `<button type="button" class="secondary" data-player-action="number">Jersey number${playerNumberOf(playerId) ? `: #${escapeHtml(playerNumberOf(playerId))}` : ""}</button>`;
@@ -1204,7 +1224,8 @@ function openPlayerMenu(playerId) {
   openDialog(nameOf(playerId), `<div class="dialog-fields action-list">${actions}</div>`, null, false);
   document.querySelectorAll("[data-player-action]").forEach(button => button.addEventListener("click", async () => {
     $("#action-dialog").close();
-    if (button.dataset.playerAction === "goal") openGoalAssist(playerId);
+    if (button.dataset.playerAction === "goal") await recordSimple("goal_for", { playerId });
+    if (button.dataset.playerAction === "assist") await recordSimple("assist_for", { playerId });
     if (button.dataset.playerAction === "off") await leaveForBench(playerId);
     if (button.dataset.playerAction === "restore") await moveToBench(playerId);
     if (button.dataset.playerAction === "absent") await markUnavailable(playerId);
@@ -1317,7 +1338,7 @@ function openTimelineDelete(eventId) {
   });
 }
 
-const MANUAL_TIMELINE_TYPES = ["goal_for", "assist_for", "goal_against", "goal_attempt", "player_moved", "clock_adjusted", "note_added"];
+const MANUAL_TIMELINE_TYPES = ["goal_for", "goal_against", "goal_attempt", "player_moved", "clock_adjusted", "note_added"];
 
 function openTimelineEdit(eventId) {
   const event = activeTimeline(events).find(item => item.eventId === eventId);
@@ -1400,7 +1421,9 @@ function renderReportDetails() {
   }).join("") || "<p class='hint'>Score events will show the exact on-field players here.</p>";
   $("#attempts-report").innerHTML = attempts.length ? `<div class="match-attempt-bars"><article><div><span>${escapeHtml(state.config.team)}</span><strong>${attemptsFor}</strong></div><i><b style="width:${attemptsFor / attemptMax * 100}%"></b></i></article><article class="against"><div><span>${escapeHtml(state.config.opponent)}</span><strong>${attemptsAgainst}</strong></div><i><b style="width:${attemptsAgainst / attemptMax * 100}%"></b></i></article></div><p class="hint">Attempts are associated with the lineup on the field when each event was recorded.</p>` : "<p class='hint'>Use the Attempt buttons during the match to compare attacking pressure. Attempt tracking is optional.</p>";
   $("#minutes-report").innerHTML = Object.values(state.players).sort((a, b) => b.totalMs - a.totalMs).map(p => `<article class="minute-card"><div class="minute-top"><strong>${escapeHtml(p.name)}</strong><strong>${formatMinutes(p.totalMs)}</strong></div><div class="bar"><span style="width:${Math.min(100, p.totalMs / matchMs * 100)}%"></span></div><small>${Object.entries(p.positionMs).map(([pos, ms]) => `${escapeHtml(positionName(pos))} ${formatMinutes(ms)}`).join(" · ") || "No field time yet"}${p.goalkeeperMs ? ` · GK ${formatMinutes(p.goalkeeperMs)}` : ""}</small></article>`).join("");
-  $("#stints-report").innerHTML = state.stints.map(stint => `<div class="stint-row"><strong>${formatClock(stint.startMs)}–${formatClock(stint.endMs)}</strong><span>${stint.goalsFor}–${stint.goalsAgainst}</span><span>${Object.entries(stint.field).map(([pos, id]) => `${nameOf(id)} (${shortPosition(pos)})`).join(", ")}</span></div>`).join("") || "<p class='hint'>Stints appear after the clock advances.</p>";
+  const groupedStints = groupLineupStints(state.stints);
+  const groupingNote = groupedStints.length < state.stints.length ? "<p class='hint'>Lineup changes within one minute are grouped as one substitution.</p>" : "";
+  $("#stints-report").innerHTML = groupingNote + (groupedStints.map(stint => `<div class="stint-row"><strong>${formatClock(stint.startMs)}–${formatClock(stint.endMs)}</strong><span>${stint.goalsFor}–${stint.goalsAgainst}</span><span>${Object.entries(stint.field).map(([pos, id]) => `${nameOf(id)} (${shortPosition(pos)})`).join(", ")}</span></div>`).join("") || "<p class='hint'>Stints appear after the clock advances.</p>");
 }
 
 function renderReport() {
@@ -1418,7 +1441,6 @@ function switchTab(view) {
   });
   ["live", "timeline", "report"].forEach(name => $("#" + name + "-panel").classList.toggle("hidden", name !== view));
   $("#field-scoreboard").classList.toggle("hidden", view !== "live");
-  $("#compact-scoreboard").classList.toggle("hidden", view === "live");
   if (view === "timeline") renderTimeline(); if (view === "report") renderReport();
 }
 
@@ -1442,8 +1464,18 @@ function showUndo(label) { clearTimeout(toastTimer); $("#undo-label").textConten
 function setSaveStatus(text, error = false) { $("#save-status").textContent = text; $("#save-status").style.color = error ? "#ff7068" : ""; }
 function nameOf(id) { return state.players[id]?.name || state.config?.roster.find(p => p.playerId === id)?.name || "Unknown"; }
 function playerNumberOf(id) { return team?.players.find(player => player.playerId === id)?.number || ""; }
-function shortPlayerName(name) { return Array.from(String(name || "").trim().split(/\s+/)[0] || "?").slice(0, 3).join("").toUpperCase(); }
-function shirtLabel(id, name) { return playerNumberOf(id) || shortPlayerName(name); }
+function shortPlayerName(name) {
+  const firstName = String(name || "").trim().split(/\s+/)[0] || "?";
+  return Array.from(firstName.toUpperCase()).slice(0, 4).join("");
+}
+function shirtHtml(id, name) {
+  return `<span class="shirt-icon"><span class="shirt-name">${escapeHtml(shortPlayerName(name))}</span><span class="shirt-number">${escapeHtml(playerNumberOf(id))}</span></span>`;
+}
+function playerTimeHtml(ms, title) {
+  const minutes = Math.floor(ms / 60_000);
+  const label = `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+  return `<span class="player-time" title="${escapeHtml(title)}" aria-label="${label}"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"></circle><path d="M10 5.5v5l3 2"></path></svg><span>${minutes}</span></span>`;
+}
 function normalizePlayerNumber(value) {
   const number = String(value ?? "").trim();
   if (number && !/^\d{1,2}$/.test(number)) throw new Error("Use a jersey number from 0 to 99.");
@@ -1456,7 +1488,7 @@ function moveDestinationOptions(selected) { const positions = [...activePosition
 function eventTypeName(type) { return ({ goal_for: "Goal for", assist_for: "Assist for", goal_against: "Goal against", goal_attempt: "Goal attempt", player_moved: "Player moved", note_added: "Note", clock_adjusted: "Game time changed", clock_paused: "Clock stopped", clock_resumed: "Clock started", period_started: "Half started", period_ended: "Half time", match_completed: "Game ended" })[type] || type.replaceAll("_", " "); }
 function eventTypeOptions(types, selected) { return types.map(type => `<option value="${type}" ${type === selected ? "selected" : ""}>${escapeHtml(eventTypeName(type))}</option>`).join(""); }
 function formatClock(ms) { const total = Math.floor(ms / 1000); return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`; }
-function formatMinutes(ms) { return `${Math.floor(ms / 60_000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, "0")}`; }
+function formatMinutes(ms) { return `${Math.floor(ms / 60_000)} min`; }
 function parseClock(value) { const match = String(value).match(/^(\d+):([0-5]\d)$/); return match ? (Number(match[1]) * 60 + Number(match[2])) * 1000 : null; }
 function escapeHtml(value) { return String(value ?? "").replace(/[&<>"]/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]); }
 function normalizeTeamPlayers(players) {
@@ -1482,17 +1514,20 @@ function normalizeTeams(value) {
     players: normalizeTeamPlayers(item.players)
   })).filter(item => item.name);
 }
-function positionName(position) { return ({ gk: "Goalkeeper", forward_striker: "Striker", forward_left: "Left forward", forward_right: "Right forward", forward_left_wing: "Left wing", forward_right_wing: "Right wing", mid_left: "Left midfield", mid_left_center: "Left center midfield", mid_center: "Center midfield", mid_right_center: "Right center midfield", mid_right: "Right midfield", back_left_fullback: "Left fullback", back_left_center: "Left center back", back_center: "Center back", back_right_center: "Right center back", back_right_fullback: "Right fullback" })[position] || position || "Unknown"; }
-function shortPosition(position) { return ({ gk: "GK", forward_striker: "ST", forward_left: "LF", forward_right: "RF", forward_left_wing: "LW", forward_right_wing: "RW", mid_left: "LM", mid_left_center: "LCM", mid_center: "CM", mid_right_center: "RCM", mid_right: "RM", back_left_fullback: "LB", back_left_center: "LCB", back_center: "CB", back_right_center: "RCB", back_right_fullback: "RB" })[position] || position; }
+function positionName(position) { return ({ gk: "Goalkeeper", forward_striker: "Striker", forward_left: "Left forward", forward_right: "Right forward", forward_left_wing: "Left wing", forward_right_wing: "Right wing", mid_attacking_left: "Left attacking midfield", mid_attacking_center: "Central attacking midfield", mid_attacking_right: "Right attacking midfield", mid_defensive_left: "Left defensive midfield", mid_defensive_center: "Central defensive midfield", mid_defensive_right: "Right defensive midfield", mid_left: "Left midfield", mid_left_center: "Left center midfield", mid_center: "Center midfield", mid_right_center: "Right center midfield", mid_right: "Right midfield", back_left_fullback: "Left fullback", back_left_center: "Left center back", back_center: "Center back", back_right_center: "Right center back", back_right_fullback: "Right fullback" })[position] || position || "Unknown"; }
+function shortPosition(position) { return ({ gk: "GK", forward_striker: "ST", forward_left: "LF", forward_right: "RF", forward_left_wing: "LW", forward_right_wing: "RW", mid_attacking_left: "LAM", mid_attacking_center: "CAM", mid_attacking_right: "RAM", mid_defensive_left: "LDM", mid_defensive_center: "CDM", mid_defensive_right: "RDM", mid_left: "LM", mid_left_center: "LCM", mid_center: "CM", mid_right_center: "RCM", mid_right: "RM", back_left_fullback: "LB", back_left_center: "LCB", back_center: "CB", back_right_center: "RCB", back_right_fullback: "RB" })[position] || position; }
 function formationLine(role, count) {
   const lines = {
     defense: { 0: [], 1: ["back_center"], 2: ["back_left_fullback", "back_right_fullback"], 3: ["back_left_fullback", "back_center", "back_right_fullback"], 4: ["back_left_fullback", "back_left_center", "back_right_center", "back_right_fullback"] },
     midfield: { 0: [], 1: ["mid_center"], 2: ["mid_left", "mid_right"], 3: ["mid_left", "mid_center", "mid_right"], 4: ["mid_left", "mid_left_center", "mid_right_center", "mid_right"], 5: ["mid_left", "mid_left_center", "mid_center", "mid_right_center", "mid_right"] },
-    attack: { 0: [], 1: ["forward_striker"], 2: ["forward_left", "forward_right"], 3: ["forward_left_wing", "forward_striker", "forward_right_wing"] }
+    attack: { 0: [], 1: ["forward_striker"], 2: ["forward_left", "forward_right"], 3: ["forward_left_wing", "forward_striker", "forward_right_wing"] },
+    "attacking-mid": { 0: [], 1: ["mid_attacking_center"], 2: ["mid_attacking_left", "mid_attacking_right"], 3: ["mid_attacking_left", "mid_attacking_center", "mid_attacking_right"] },
+    "defensive-mid": { 0: [], 1: ["mid_defensive_center"], 2: ["mid_defensive_left", "mid_defensive_right"], 3: ["mid_defensive_left", "mid_defensive_center", "mid_defensive_right"] }
   };
   return lines[role][count] || [];
 }
 function formationPositions([defenders, midfielders, attackers]) { return [...formationLine("attack", attackers), ...formationLine("midfield", midfielders), ...formationLine("defense", defenders), "gk"]; }
+function layoutPositions(layout) { return layout.lines ? [...layout.lines.flatMap(([role, count]) => formationLine(role, count)), "gk"] : formationPositions(layout.shape); }
 function activePositions() { return state.config?.positions || defaults[state.config?.playersOnField] || POSITIONS.slice(0, state.config?.playersOnField || 0); }
 function positionBand(position) {
   if (position === "gk") return "keeper";

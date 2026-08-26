@@ -11,6 +11,8 @@ import { displayedGameTime } from "../src/domain/game-time.js";
 import { mainMenuMatchStatus, STALE_PAUSE_MS } from "../src/domain/match-status.js";
 import { createId } from "../src/domain/id.js";
 import { analyzeTeam } from "../src/domain/analytics.js";
+import { recentSubstitutionChanges, SUBSTITUTION_HIGHLIGHT_MS } from "../src/domain/substitution-highlight.js";
+import { groupLineupStints } from "../src/domain/lineup-stint.js";
 
 const matchId = "match-1";
 const roster = ["Alex", "Blair", "Casey"].map((name, index) => ({ playerId: `p${index + 1}`, name, status: "available" }));
@@ -163,6 +165,31 @@ test("supports dragging a player off and back onto a short field", () => {
   assert.equal(state.players.p2.totalMs, 300_000);
   assert.equal(state.players.p3.totalMs, 100_000);
   assert.equal(state.stints.length, 3);
+});
+
+test("recent substitutions identify who moved on and off the field", () => {
+  const substitution = moved(4, 120_000,
+    { playerId: "p2", from: "forward_striker", to: "off_field" },
+    { playerId: "p3", from: "off_field", to: "forward_striker" });
+  const movedAt = Date.parse(substitution.realTimestamp);
+  const recent = recentSubstitutionChanges([...base, substitution], movedAt + SUBSTITUTION_HIGHLIGHT_MS - 1);
+  assert.deepEqual([...recent.on], ["p3"]);
+  assert.deepEqual([...recent.off], ["p2"]);
+  const expired = recentSubstitutionChanges([...base, substitution], movedAt + SUBSTITUTION_HIGHLIGHT_MS);
+  assert.equal(expired.on.size, 0);
+  assert.equal(expired.off.size, 0);
+});
+
+test("lineup changes within one minute are grouped into one substitution stint", () => {
+  const stints = [
+    { startMs: 0, endMs: 600_000, durationMs: 600_000, goalsFor: 1, goalsAgainst: 0, field: { gk: "p1", forward_striker: "p2" } },
+    { startMs: 600_000, endMs: 620_000, durationMs: 20_000, goalsFor: 0, goalsAgainst: 1, field: { gk: "p1" } },
+    { startMs: 620_000, endMs: 900_000, durationMs: 280_000, goalsFor: 2, goalsAgainst: 0, field: { gk: "p1", forward_striker: "p3" } }
+  ];
+  const grouped = groupLineupStints(stints);
+  assert.equal(grouped.length, 2);
+  assert.deepEqual(grouped[1], { ...stints[2], startMs: 600_000, durationMs: 300_000, goalsFor: 2, goalsAgainst: 1 });
+  assert.equal(stints[2].startMs, 620_000);
 });
 
 test("new matches can start with every position blank", () => {

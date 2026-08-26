@@ -1,4 +1,5 @@
 import { activeTimeline } from "./match-event.js";
+import { groupLineupStints } from "./lineup-stint.js";
 
 export const REPORT_THRESHOLDS = Object.freeze({
   playingTime: { matches: 1 },
@@ -82,6 +83,7 @@ export function analyzeTeam(matchRecords) {
     const finalMatch = state.completed || isFinal;
     const timeline = activeTimeline(events);
     const attempts = timeline.filter(event => event.type === "goal_attempt");
+    const lineupStints = groupLineupStints(state.stints);
     const playerFieldIntervals = new Map();
     const playerElapsedMs = new Map();
     exposureMs += state.elapsedMs;
@@ -127,7 +129,7 @@ export function analyzeTeam(matchRecords) {
       playerMap.set(player.playerId, row);
     }
 
-    for (const stint of state.stints) {
+    for (const stint of lineupStints) {
       const key = lineupKey(stint.field);
       if (key) {
         const playerIds = key.split("\u0000");
@@ -188,7 +190,7 @@ export function analyzeTeam(matchRecords) {
     if (finalMatch) {
       const matchLineups = new Map();
       const matchFormations = new Set();
-      for (const stint of state.stints) {
+      for (const stint of lineupStints) {
         const key = lineupKey(stint.field);
         if (key && stint.durationMs > 0) matchLineups.set(key, key.split("\u0000"));
         if (stint.durationMs > 0) matchFormations.add(stint.layoutName || state.config.layoutName || "Custom");
@@ -242,7 +244,7 @@ export function analyzeTeam(matchRecords) {
     }
 
     for (const goal of timeline.filter(event => event.type === "goal_for" || event.type === "goal_against")) {
-      const stint = state.stints.find(item => goal.gameTimeMs >= item.startMs && goal.gameTimeMs <= item.endMs);
+      const stint = lineupStints.find(item => goal.gameTimeMs >= item.startMs && goal.gameTimeMs <= item.endMs);
       if (!stint) continue;
       for (const playerId of Object.values(stint.field)) {
         const playerTiming = playerTimingMap.get(playerId);
@@ -252,7 +254,7 @@ export function analyzeTeam(matchRecords) {
     }
 
     for (const attempt of attempts) {
-      const stint = state.stints.find(item => attempt.gameTimeMs >= item.startMs && attempt.gameTimeMs <= item.endMs);
+      const stint = lineupStints.find(item => attempt.gameTimeMs >= item.startMs && attempt.gameTimeMs <= item.endMs);
       const bucketIndex = timing.findIndex(bucket => attempt.gameTimeMs >= bucket.startMs && attempt.gameTimeMs < bucket.endMs);
       if (!stint || bucketIndex < 0) continue;
       const key = attempt.payload?.team === "against" ? "attemptsAgainst" : "attemptsFor";

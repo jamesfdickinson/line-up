@@ -4,13 +4,13 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#c9ff5b">
-  <title>CoachJD</title>
+  <title>LineUp JD</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="app-header">
-    <a class="brand" href="."><span class="brand-mark">JD</span><span>CoachJD</span></a>
+    <a class="brand" href="."><span class="brand-mark">JD</span><span>LineUp JD</span></a>
     <span id="save-status" class="save-status" aria-live="polite">Offline ready</span>
     <nav class="match-topbar" aria-label="Match navigation">
       <button id="match-back" class="topbar-button topbar-back" type="button" aria-label="Back to team"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
@@ -49,7 +49,7 @@
         <div id="season-summary" class="season-summary"></div>
       </section>
       <section id="analysis-method-panel" class="hidden method-page">
-        <div class="panel-head analysis-panel-head"><div><div class="eyebrow">About the analysis</div><h2>How CoachJD learns</h2><p>What is collected, how it is calculated, and what the results mean.</p></div><button id="back-to-analysis" class="secondary">← Analysis</button></div>
+        <div class="panel-head analysis-panel-head"><div><div class="eyebrow">About the analysis</div><h2>How LineUp JD learns</h2><p>What is collected, how it is calculated, and what the results mean.</p></div><button id="back-to-analysis" class="secondary">← Analysis</button></div>
         <div id="method-data-summary" class="method-data-summary"></div>
         <section class="method-card">
           <span class="eyebrow">1 · Collected during matches</span><h3>Coach actions and team outcomes</h3>
@@ -70,7 +70,7 @@
         <section class="method-card">
           <span class="eyebrow">4 · Interpreted cautiously</span><h3>Association, uncertainty, and readiness</h3>
           <div class="method-data-grid"><article><strong>Posterior estimate</strong><p>The model's best current estimate of the factor's effect.</p></article><article><strong>Credible range</strong><p>The plausible range around that estimate. Wider ranges mean more uncertainty.</p></article><article><strong>Report unlocks</strong><p>Detailed reports wait for enough matches, outcomes, variation, and position minutes.</p></article></div>
-          <p class="method-boundary"><strong>Important:</strong> CoachJD identifies modeled associations, not proof that a player caused a result. It recommends arrangements, not player actions.</p>
+          <p class="method-boundary"><strong>Important:</strong> LineUp JD identifies modeled associations, not proof that a player caused a result. It recommends arrangements, not player actions.</p>
         </section>
       </section>
     </section>
@@ -86,16 +86,9 @@
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
           <div class="team-score"><span id="team-name">TEAM</span><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add our goal">+</button><strong id="score-for">0</strong><button id="goal-attempt-button" class="goal-attempt-button" type="button" aria-label="Record goal attempt">Attempt</button></div>
-          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><small id="period-label">Before kickoff</small><div class="clock-actions"><button id="match-control" class="match-control primary" type="button">Start</button></div></div>
+          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><div class="clock-actions"><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button><button id="match-control" class="match-control primary" type="button">Start</button></div></div>
           <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add opponent goal">+</button><span id="opponent-name">OPPONENT</span><button id="opponent-goal-attempt-button" class="goal-attempt-button" type="button" aria-label="Record opponent goal attempt">Attempt</button></div>
         </div>
-      </section>
-
-      <section id="compact-scoreboard" class="compact-scoreboard hidden" aria-label="Current score and match time">
-        <span id="compact-team-name">TEAM</span>
-        <strong><span id="compact-score-for">0</span><span class="compact-score-separator">–</span><span id="compact-score-against">0</span></strong>
-        <span id="compact-opponent-name">OPPONENT</span>
-        <time id="compact-clock">00:00</time>
       </section>
 
       <section id="live-panel" class="tab-panel">

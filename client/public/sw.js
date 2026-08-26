@@ -1,4 +1,4 @@
-const CACHE = "coachjd-vite-v96";
+const CACHE = "coachjd-vite-v97";
 const ROOT = new URL("./", self.registration.scope).href;
 
 self.addEventListener("install", event => event.waitUntil((async () => {

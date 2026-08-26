@@ -1,6 +1,6 @@
-# CoachJD
+# LineUp JD
 
-CoachJD is an offline-first, event-sourced live soccer tracker built as a Vite-powered JavaScript progressive web app. The product requirements remain at `../LIVE_SOCCER_TRACKER_REQUIREMENTS.md`; this directory contains the complete client application.
+LineUp JD is an offline-first, event-sourced live soccer tracker built as a Vite-powered JavaScript progressive web app. The product requirements remain at `../LIVE_SOCCER_TRACKER_REQUIREMENTS.md`; this directory contains the complete client application.
 
 The live tracker remains static and offline-first. Match setup, the clock, events, projections, corrections, quick reports, and exports run in the browser and persist in IndexedDB. Deep Bayesian analysis can optionally be requested from a separate server.
 
@@ -64,7 +64,7 @@ The analysis page shows model status and the last-updated time but does not expo
 - Saved position IDs contain both group and exact role, such as `forward_striker`, `mid_center`, `back_left_fullback`, and `gk`; no separate group lookup is required
 - Append-only IndexedDB event history with undo and correction events
 - Reconstructed field, bench, player/position/GK minutes, and lineup stints
-- Explainable playing-time suggestions; CoachJD never changes the lineup itself
+- Explainable playing-time suggestions; LineUp JD never changes the lineup itself
 - Offline app shell and refresh recovery
 - Complete JSON backup and reproducible event CSV export
 
