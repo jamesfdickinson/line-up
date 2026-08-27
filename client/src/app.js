@@ -260,7 +260,7 @@ function openTeamMenu() {
 
 function openDataTools() {
   const cards = sampleDataOptions().map(sample => `<button type="button" class="sample-data-card" data-load-sample="${sample.key}"><span><strong>${escapeHtml(sample.name.replace("Sample · ", ""))}</strong><small>${sample.matches} match${sample.matches === 1 ? "" : "es"}</small></span><p>${escapeHtml(sample.description)}</p><em>Load as a new team →</em></button>`).join("");
-  openDialog("Data tools", `<section class="backup-tools"><h3>Backup</h3><p>Export everything or add new data from another device. Existing teams and matches remain; deletions made elsewhere are not removed.</p><div><button type="button" class="secondary" data-export-backup>Export all data</button><button type="button" class="secondary" data-import-backup>Load from file</button><input type="file" data-backup-file accept=".json,application/json" hidden></div><small>For the same team on two devices, first load a primary-device backup onto the second device so both share the same team identity.</small></section><section class="sample-data-tools"><h3>Test data</h3><p class="sample-data-note">Samples are added as new teams and do not replace existing data.</p><div class="sample-data-list">${cards}</div></section><section class="clear-data-tools"><h3>Reset</h3><button type="button" class="secondary danger-action" data-clear-all>Clear all data</button></section>`, null, false);
+  openDialog("Data tools", `<section class="backup-tools"><h3>Backup</h3><p>Export one team or every team, then add new data from another device. Existing data remains when a file is loaded.</p><div><button type="button" class="secondary" data-export-team ${team ? "" : "disabled"}>Export this team</button><button type="button" class="secondary" data-export-backup>Export all teams</button><button type="button" class="secondary" data-import-backup>Load from file</button><input type="file" data-backup-file accept=".json,application/json" hidden></div><small>For the same team on two devices, first load a primary-device backup onto the second device so both share the same team identity. Deletions made elsewhere are not removed.</small></section><section class="sample-data-tools"><h3>Test data</h3><p class="sample-data-note">Samples are added as new teams and do not replace existing data.</p><div class="sample-data-list">${cards}</div></section><section class="clear-data-tools"><h3>Reset</h3><button type="button" class="secondary danger-action" data-clear-all>Clear all data</button></section>`, null, false);
   const fileInput = $("[data-backup-file]");
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files?.[0];
@@ -278,6 +278,11 @@ function openDataTools() {
   });
   $("#dialog-body").onclick = async event => {
     const button = event.target.closest("[data-load-sample]");
+    if (event.target.closest("[data-export-team]")) {
+      await exportCurrentTeamBackup();
+      $("#action-dialog").close();
+      return;
+    }
     if (event.target.closest("[data-export-backup]")) {
       await exportFullBackup();
       $("#action-dialog").close();
@@ -303,6 +308,24 @@ async function exportFullBackup() {
   const backup = createFullBackup(await store.allMeta(), await store.allEvents());
   downloadFile(`lineupjd-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2), "application/json");
   $("#data-tools-status").textContent = "Backup exported";
+}
+
+async function exportCurrentTeamBackup() {
+  if (!team) return;
+  const allEvents = await store.allEvents();
+  const teamMatchIds = new Set(matchIdsForTeam(allEvents, team.teamId));
+  const teamEvents = allEvents.filter(event => teamMatchIds.has(event.matchId));
+  const allMeta = await store.allMeta();
+  const teamMeta = allMeta.filter(record => record.key === `analysisReportSeen:${team.teamId}`);
+  teamMeta.push(
+    { key: "teams", value: [team] },
+    { key: "activeTeamId", value: team.teamId },
+    { key: "team", value: team }
+  );
+  const backup = createFullBackup(teamMeta, teamEvents);
+  const safeName = team.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "team";
+  downloadFile(`lineupjd-${safeName}-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2), "application/json");
+  $("#data-tools-status").textContent = `${team.name} exported`;
 }
 
 async function mergeFullBackup(backup) {
