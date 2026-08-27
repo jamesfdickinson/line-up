@@ -10,7 +10,7 @@ import { matchIdsForTeam } from "../src/domain/team.js";
 import { displayedGameTime } from "../src/domain/game-time.js";
 import { mainMenuMatchStatus, STALE_PAUSE_MS } from "../src/domain/match-status.js";
 import { createId } from "../src/domain/id.js";
-import { analyzeTeam } from "../src/domain/analytics.js";
+import { analyzeTeam, MIN_FINISHED_MATCH_MS } from "../src/domain/analytics.js";
 import { recentSubstitutionChanges, SUBSTITUTION_HIGHLIGHT_MS } from "../src/domain/substitution-highlight.js";
 import { groupLineupStints } from "../src/domain/lineup-stint.js";
 
@@ -349,6 +349,27 @@ test("team analysis unlocks progressively and attributes stint outcomes", () => 
   assert.equal(attemptRichAnalysis.outcomeReadiness.fatigue.attemptsAgainst.ready, true);
   assert.equal(attemptRichAnalysis.outcomeReadiness.fatigue.attemptsMargin.ready, true);
   assert.equal(attemptRichAnalysis.outcomeReadiness.playerTime.attemptsMargin.ready, false);
+});
+
+test("reports only treat stopped matches with a few tracked minutes as finished", () => {
+  const shortEvents = [...base, event(4, "goal_for", 60_000), event(5, "clock_paused", MIN_FINISHED_MATCH_MS - 1)];
+  const shortState = new LineupProjector().project(shortEvents, MIN_FINISHED_MATCH_MS - 1);
+  const shortAnalysis = analyzeTeam([{ events: shortEvents, state: shortState }]);
+  assert.equal(shortAnalysis.matches, 1);
+  assert.equal(shortAnalysis.completedMatches, 0);
+  assert.equal(shortAnalysis.wins, 0);
+  assert.equal(shortAnalysis.readiness.playingTime.ready, true);
+
+  const finishedEvents = [...base, event(4, "goal_for", 60_000), event(5, "clock_paused", MIN_FINISHED_MATCH_MS)];
+  const finishedState = new LineupProjector().project(finishedEvents, MIN_FINISHED_MATCH_MS);
+  const finishedAnalysis = analyzeTeam([{ events: finishedEvents, state: finishedState }]);
+  assert.equal(finishedAnalysis.completedMatches, 1);
+  assert.equal(finishedAnalysis.wins, 1);
+
+  const resumedEvents = [...finishedEvents, event(6, "clock_resumed", MIN_FINISHED_MATCH_MS)];
+  const resumedState = new LineupProjector().project(resumedEvents, MIN_FINISHED_MATCH_MS + 60_000);
+  const resumedAnalysis = analyzeTeam([{ events: resumedEvents, state: resumedState }]);
+  assert.equal(resumedAnalysis.completedMatches, 0);
 });
 
 test("playing-time analysis supports per-game averages and season totals", () => {

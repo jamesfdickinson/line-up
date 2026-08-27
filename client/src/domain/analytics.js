@@ -11,6 +11,8 @@ export const REPORT_THRESHOLDS = Object.freeze({
   positions: { completedMatches: 8, goals: 10, supportedFactors: 3, minMinutes: 90, attemptMatches: 5, attemptEvents: 45, attemptMinMinutes: 60 },
   attempts: { matches: 1, events: 1, resultMatches: 5, resultAttemptMatches: 3 }
 });
+export const MIN_FINISHED_MATCH_MS = 3 * 60_000;
+const stoppedLongEnoughForReports = state => Boolean(state.currentPeriod) && !state.periodRunning && state.elapsedMs >= MIN_FINISHED_MATCH_MS;
 
 const percent = (...values) => Math.round(Math.min(1, ...values) * 100);
 const report = (ready, progress, needs) => ({ ready, progress, needs });
@@ -56,7 +58,7 @@ const playerTimeBucketIndex = (intervals, eventTimeMs) => {
 
 export function analyzeTeam(matchRecords) {
   const recorded = matchRecords.filter(({ state }) => state?.config && (state.elapsedMs > 0 || state.completed));
-  const completed = recorded.filter(({ state, isFinal }) => state.completed || isFinal);
+  const completed = recorded.filter(({ state }) => stoppedLongEnoughForReports(state));
   const playerMap = new Map();
   const positionMap = new Map();
   const lineupMap = new Map();
@@ -79,8 +81,8 @@ export function analyzeTeam(matchRecords) {
     { key: "late", label: "After 30 min", startMs: 30 * 60_000, endMs: Infinity, exposureMs: 0, goalsFor: 0, goalsAgainst: 0, attemptsFor: 0, attemptsAgainst: 0, completedMatches: 0, wins: 0, finalMargin: 0 }
   ];
 
-  for (const { state, events, isFinal } of recorded) {
-    const finalMatch = state.completed || isFinal;
+  for (const { state, events } of recorded) {
+    const finalMatch = stoppedLongEnoughForReports(state);
     const timeline = activeTimeline(events);
     const attempts = timeline.filter(event => event.type === "goal_attempt");
     const lineupStints = groupLineupStints(state.stints);

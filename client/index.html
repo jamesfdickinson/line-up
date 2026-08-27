@@ -11,7 +11,7 @@
 <body>
   <header class="app-header">
     <a class="brand" href="."><span class="brand-mark">JD</span><span>LineUp JD</span></a>
-    <span id="save-status" class="save-status" aria-live="polite">Offline ready</span>
+    <strong id="header-team-name" class="header-team-name"></strong>
     <nav class="match-topbar" aria-label="Match navigation">
       <button id="match-back" class="topbar-button topbar-back" type="button" aria-label="Back to team"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg></button>
       <strong id="match-topbar-team" class="match-topbar-team">TEAM</strong>
@@ -85,9 +85,15 @@
       <section id="field-scoreboard" class="scoreboard">
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
-          <div class="team-score"><span id="team-name">TEAM</span><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add our goal">+</button><strong id="score-for">0</strong><button id="goal-attempt-button" class="goal-attempt-button" type="button" aria-label="Record goal attempt">Attempt</button></div>
-          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><div class="clock-actions"><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button><button id="match-control" class="match-control primary" type="button">Start</button></div></div>
-          <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add opponent goal">+</button><span id="opponent-name">OPPONENT</span><button id="opponent-goal-attempt-button" class="goal-attempt-button" type="button" aria-label="Record opponent goal attempt">Attempt</button></div>
+          <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong></div>
+          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><div class="clock-actions"><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
+          <div class="team-score away"><strong id="score-against">0</strong><span id="opponent-name">OPPONENT</span></div>
+        </div>
+        <div class="quick-log" aria-label="Log match events">
+          <button id="score-for-button" class="quick-log-button goal-for" type="button"><span aria-hidden="true">⚽</span><strong>Goal</strong><small id="quick-team-name">Us</small></button>
+          <button id="goal-attempt-button" class="quick-log-button attempt-for" type="button"><span aria-hidden="true">↗</span><strong>Attempt</strong><small>Us</small></button>
+          <button id="score-against-button" class="quick-log-button goal-against" type="button"><span aria-hidden="true">⚽</span><strong>Goal</strong><small id="quick-opponent-name">Them</small></button>
+          <button id="opponent-goal-attempt-button" class="quick-log-button attempt-against" type="button"><span aria-hidden="true">↙</span><strong>Attempt</strong><small>Them</small></button>
         </div>
       </section>
 
@@ -110,10 +116,11 @@
       </section>
 
       <section id="report-panel" class="tab-panel hidden">
-        <div class="panel-head"><div><div class="eyebrow">Match</div><h2>Match analysis</h2></div><div class="report-actions"><button id="export-json" class="secondary">JSON</button><button id="export-csv" class="secondary">CSV</button></div></div>
+        <div class="panel-head"><div><div class="eyebrow">Match</div><h2>Match analysis</h2></div><div class="report-actions"><button id="export-json" class="secondary">Export</button></div></div>
         <div id="match-report-summary" class="match-report-summary"></div>
-        <h2>Goals</h2><div id="goal-lineups" class="goal-lineups"></div>
-        <h2>Attempts</h2><div id="attempts-report" class="attempts-report"></div>
+        <h2>Goals &amp; attempts timeline</h2><div id="match-event-flow" class="match-event-flow"></div>
+        <h2>Players on for goals</h2><p class="hint report-intro">Each player appears once per side, grouped by the exact number of goals recorded while they were on the field.</p><div id="goal-player-groups" class="goal-player-groups"></div>
+        <h2>Attempts summary</h2><div id="attempts-report" class="attempts-report"></div>
         <h2>Playing time</h2>
         <div id="minutes-report" class="minutes-report"></div>
         <h2>Lineup stints</h2><div id="stints-report" class="stints-report"></div>

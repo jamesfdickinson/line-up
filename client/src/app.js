@@ -2,7 +2,7 @@ import { MatchEvent, activeTimeline, isCorrection } from "./domain/match-event.j
 import { MatchClock } from "./domain/match-clock.js";
 import { LineupProjector } from "./domain/lineup-projector.js";
 import { EventStore } from "./storage/event-store.js";
-import { exportMatchJson, exportEventsCsv, downloadFile } from "./domain/exporter.js";
+import { exportMatchJson, downloadFile } from "./domain/exporter.js";
 import { eventPlayerRecord, orderedScorerGroups, playerIdFromName } from "./domain/player-label.js";
 import { matchIdsForTeam } from "./domain/team.js";
 import { displayedGameTime } from "./domain/game-time.js";
@@ -39,9 +39,10 @@ const SILENT_EVENT_TYPES = new Set([
   "layout_changed",
   "period_started", "period_ended", "clock_paused", "clock_resumed"
 ]);
-const ANALYSIS_CATEGORY_REPORT_COUNT = 7;
-const ANALYSIS_REPORT_COUNT = ANALYSIS_CATEGORY_REPORT_COUNT + 1;
-const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_REPORT_COUNT * 5 + 1;
+const ANALYSIS_CATEGORY_KEYS = ["team", "impact", "formations", "lines", "positions", "fatigue", "playerTime"];
+const ANALYSIS_OUTCOME_METRICS = ["attemptsFor", "attemptsAgainst", "attemptsMargin", "win", "margin"];
+const ANALYSIS_REPORT_COUNT = ANALYSIS_OUTCOME_METRICS.length + 1;
+const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_KEYS.length * ANALYSIS_OUTCOME_METRICS.length + 1;
 const DEMO_ANALYSIS = Object.freeze({
   matches: 8, completedMatches: 8, wins: 5, draws: 1, losses: 2, winRate: .625,
   scoreMargin: 6, goalsFor: 18, goalsAgainst: 12, attemptsFor: 91, attemptsAgainst: 67,
@@ -201,7 +202,7 @@ function bindStaticEvents() {
   $("#analysis-card").addEventListener("click", showSeasonAnalysis);
   $("#team-menu").addEventListener("click", openTeamMenu);
   $("#add-first-team").addEventListener("click", openAddTeam);
-  $("#back-to-team").addEventListener("click", () => { $("#season-analysis-panel").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#team-dashboard").classList.remove("hidden"); });
+  $("#back-to-team").addEventListener("click", returnFromAnalysis);
   $("#back-to-analysis").addEventListener("click", () => { $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden"); window.scrollTo(0, 0); });
   $("#team-matches").addEventListener("click", event => { const button = event.target.closest("[data-open-match]"); if (button) loadMatch(button.dataset.openMatch); });
   $("#clock-button").addEventListener("click", openClockAdjust);
@@ -218,7 +219,6 @@ function bindStaticEvents() {
   $("#add-note").addEventListener("click", openTimelineAdd);
   $("#undo").addEventListener("click", undoLatest);
   $("#export-json").addEventListener("click", () => downloadFile(fileBase() + ".json", exportMatchJson(events, state), "application/json"));
-  $("#export-csv").addEventListener("click", () => downloadFile(fileBase() + "-events.csv", exportEventsCsv(events, state), "text/csv"));
   document.querySelectorAll(".tab").forEach(button => button.addEventListener("click", () => switchTab(button.dataset.view)));
 }
 
@@ -243,7 +243,7 @@ async function persistTeams() {
 }
 
 function openTeamMenu() {
-  const rows = teams.map(item => `<div class="team-menu-row"><button type="button" class="team-select ${item.teamId === team?.teamId ? "active" : ""}" data-team-select="${escapeHtml(item.teamId)}"><strong>${escapeHtml(item.name)}</strong>${item.teamId === team?.teamId ? "<small>Current</small>" : ""}</button><button type="button" class="team-delete" data-team-delete="${escapeHtml(item.teamId)}" aria-label="Delete ${escapeHtml(item.name)}">Delete</button></div>`).join("");
+  const rows = teams.map(item => `<div class="team-menu-row"><button type="button" class="team-select ${item.teamId === team?.teamId ? "active" : ""}" data-team-select="${escapeHtml(item.teamId)}"><strong>${escapeHtml(item.name)}</strong>${item.teamId === team?.teamId ? "<small>Current</small>" : ""}</button><button type="button" class="team-delete" data-team-delete="${escapeHtml(item.teamId)}" aria-label="More options for ${escapeHtml(item.name)}" title="More options">•••</button></div>`).join("");
   openDialog("Teams", `<div class="team-menu-list">${rows || "<p class='hint'>No teams yet.</p>"}<button type="button" class="primary add-team-menu" data-add-team>+ Add team</button></div>`, null, false);
   $("#dialog-body").onclick = event => {
     const add = event.target.closest("[data-add-team]");
@@ -251,8 +251,18 @@ function openTeamMenu() {
     const remove = event.target.closest("[data-team-delete]");
     if (add) { $("#action-dialog").close(); openAddTeam(); }
     if (select) { $("#action-dialog").close(); selectTeam(select.dataset.teamSelect); }
-    if (remove) { $("#action-dialog").close(); openDeleteTeam(remove.dataset.teamDelete); }
+    if (remove) { $("#action-dialog").close(); openTeamOptions(remove.dataset.teamDelete); }
   };
+}
+
+function openTeamOptions(teamId) {
+  const target = teams.find(item => item.teamId === teamId);
+  if (!target) return;
+  openDialog(target.name, `<div class="dialog-fields action-list"><button type="button" class="secondary danger-action" data-delete-team-option>Delete team</button></div>`, null, false);
+  $("[data-delete-team-option]").addEventListener("click", () => {
+    $("#action-dialog").close();
+    openDeleteTeam(teamId);
+  });
 }
 
 function openAddTeam() {
@@ -329,6 +339,7 @@ async function loadMatch(id) {
 
 async function renderTeamDashboard() {
   const hasTeam = Boolean(team);
+  $("#header-team-name").textContent = team?.name || "";
   $("#no-team-panel").classList.toggle("hidden", hasTeam);
   $("#team-dashboard").classList.toggle("hidden", !hasTeam);
   $("#team-name-input").disabled = !hasTeam;
@@ -339,7 +350,7 @@ async function renderTeamDashboard() {
   const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id))).sort((a, b) => b.state.config.date.localeCompare(a.state.config.date));
   const matches = records.map(record => record.state);
   const analysis = analyzeTeam(records);
-  const readyReportCount = analysis.outcomeReportReadyCount + Number(analysis.readiness.playingTime.ready);
+  const readyReportCount = outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready);
   const readyPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
   const seenReadyCount = Number((await store.getMeta(`analysisReportSeen:${team.teamId}`))?.value || 0);
   const newReports = Math.max(0, readyReportCount - seenReadyCount);
@@ -361,7 +372,8 @@ async function renderTeamDashboard() {
   [...$("#team-matches").querySelectorAll(".match-row")].forEach((row, index) => {
     const match = matches[index];
     const status = mainMenuMatchStatus(match, pausedAtByMatch.get(match.matchId));
-    row.querySelector("span")?.insertAdjacentHTML("beforeend", `<em class="match-state ${status.toLowerCase()}">${status}</em>`);
+    const menuStatus = status === "Running" ? "Playing" : status === "Ready" ? "Not started" : "";
+    if (menuStatus) row.querySelector("span")?.insertAdjacentHTML("beforeend", `<em class="match-state ${menuStatus.toLowerCase().replace(" ", "-")}">${menuStatus}</em>`);
   });
 }
 
@@ -405,13 +417,15 @@ function bindGrowingPlayerInputs(fields) {
 
 async function showSeasonAnalysis() {
   if (!team) return;
+  $("#setup-view").classList.remove("analysis-detail-open");
+  $("#setup-view").classList.add("analysis-open");
   const all = await store.allEvents();
   const ids = matchIdsForTeam(all, team.teamId);
   const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id)));
   const analysis = analyzeTeam(records);
   $("#season-summary").innerHTML = teamAnalysisHtml(analysis);
   bindAnalysisControls(analysis);
-  await store.setMeta(`analysisReportSeen:${team.teamId}`, analysis.outcomeReportReadyCount + Number(analysis.readiness.playingTime.ready));
+  await store.setMeta(`analysisReportSeen:${team.teamId}`, outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready));
   $("#analysis-new-badge").classList.add("hidden");
   $("#team-dashboard").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden");
 }
@@ -424,42 +438,78 @@ function analysisRecord(matchEvents) {
 }
 
 function teamAnalysisHtml(analysis) {
-  const minutesReady = analysis.readiness.playingTime.ready && analysis.players.length;
-  const readinessPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
-  const readinessCategories = [["team", "Team"], ["impact", "Player"], ["lines", "Player position rank"], ["fatigue", "Time on field average"], ["formations", "Formation"], ["playerTime", "Time on field by player"], ["positions", "Player position name"]];
-  const readinessOutcomes = [["attemptsFor", "Attempts for"], ["attemptsAgainst", "Attempts against"], ["attemptsMargin", "Attempts margin"], ["win", "Win rate"], ["margin", "Score margin"]];
-  const minutesSource = minutesReady ? analysis.players : DEMO_ANALYSIS.players;
+  const groups = [
+    ["Playing time", "Track minutes and appearances without recording any goals or attempts.", ["playingTime"]],
+    ["Attack & defense", "Explore each pressure measure separately. These reports unlock from recorded attempts.", ["attemptsFor", "attemptsAgainst", "attemptsMargin"]],
+    ["Match results", "Explore results separately from attempt tracking. These reports unlock from finished matches and goals.", ["win", "margin"]]
+  ];
   return `
-    <section class="analysis-readiness-card">
-      <div class="analysis-readiness-top"><div><span class="eyebrow">Data readiness</span><h3>${readinessPartCount} of ${ANALYSIS_OUTCOME_COUNT} report parts ready</h3><p>Average playing time unlocks from tracked field time. Each analysis category becomes fully unlocked when all five outcomes are ready.</p></div><strong>${readinessPartCount}/${ANALYSIS_OUTCOME_COUNT}</strong></div>
-      <div class="readiness-track"><span style="width:${readinessPartCount / ANALYSIS_OUTCOME_COUNT * 100}%"></span></div>
-      <div class="readiness-list">
-        <article class="${analysis.readiness.playingTime.ready ? "ready" : ""}"><span>${analysis.readiness.playingTime.ready ? "✓" : "○"}</span><div><strong>Average playing time</strong><small>Basic tracking report · 1 match</small><div class="readiness-outcomes"><span class="${analysis.readiness.playingTime.ready ? "ready" : ""}" title="${escapeHtml(analysis.readiness.playingTime.needs)}">Field time ${analysis.readiness.playingTime.ready ? "✓" : `${analysis.readiness.playingTime.progress}%`}</span></div></div><em>${analysis.readiness.playingTime.ready ? "1/1" : `${analysis.readiness.playingTime.progress}%`}</em></article>
-        ${readinessCategories.map(([key, title]) => {
-        const parts = readinessOutcomes.map(([metric, label]) => ({ label, readiness: analysis.outcomeReadiness[key][metric] }));
-        const readyParts = parts.filter(part => part.readiness.ready).length;
-        const progress = Math.max(...parts.map(part => part.readiness.progress));
-        return `<article class="${readyParts ? "ready" : ""}"><span>${readyParts ? "✓" : "○"}</span><div><strong>By ${title}</strong><small>${readyParts} of ${parts.length} outcomes ready</small><div class="readiness-outcomes">${parts.map(part => `<span class="${part.readiness.ready ? "ready" : ""}" title="${escapeHtml(part.readiness.needs)}">${part.label} ${part.readiness.ready ? "✓" : `${part.readiness.progress}%`}</span>`).join("")}</div></div><em>${readyParts ? `${readyParts}/${parts.length}` : `${progress}%`}</em></article>`;
-      }).join("")}</div>
-    </section>
-
-    <div class="analysis-report-grid report-progression-grid">
-      <section class="analysis-report-card playing-time-report">
-        <div class="analysis-report-head"><div><span class="eyebrow">Quick summary · 1 match</span><h3>Average playing time</h3><p>Compare average field time per game with total field time accumulated this season.</p></div>${sourcePill(minutesReady)}</div>
-        <div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period">
-          <button class="active" type="button" data-playing-time-view="game">Per game</button>
-          <button type="button" data-playing-time-view="season">Per season</button>
-        </div>
-        <div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(minutesSource, "game")}</div>
-        ${reportModelNote("Timeline duration aggregation")}
-        ${unlockFooter(analysis.readiness.playingTime, minutesReady ? "Calculated from every on-field interval." : "Preview uses sample players and values.")}
-      </section>
-
+    ${analysisOverviewBarHtml()}
+    <div id="analysis-report-menu" class="analysis-report-menu">
+      <section class="analysis-data-note"><div><span class="eyebrow">Your data</span><strong>${analysis.completedMatches} completed match${analysis.completedMatches === 1 ? "" : "es"} · ${analysis.goalsFor + analysis.goalsAgainst} goals · ${analysis.attemptsFor + analysis.attemptsAgainst} attempts</strong></div><button class="info-button" data-analysis-method-link type="button" aria-label="How reports work">i</button></section>
+      ${groups.map(([title, blurb, keys]) => `<section class="analysis-menu-group"><div class="analysis-menu-heading"><h3>${title}</h3><p>${blurb}</p></div><div class="analysis-menu-list">${keys.map(key => analysisMenuCardHtml(analysis, key)).join("")}</div></section>`).join("")}
+      <p class="analysis-method-note"><strong>Optional data stays optional.</strong> Tracking field time powers playing-time reports. Goals and attempts add lineup analysis when you choose to record them.</p>
     </div>
+    <div id="analysis-report-detail" class="hidden"></div>`;
+}
 
-    ${outcomeReportsHtml(analysis)}
+function analysisOverviewBarHtml() {
+  return `<div class="analysis-overview-bar"><button type="button" class="secondary" data-analysis-team-back>← Team</button><strong>Reports</strong></div>`;
+}
 
-    <p class="analysis-method-note"><strong>How to read this:</strong> LineUp JD connects who was on the field, where, and when with goals, results, and optional attempts. It recommends arrangements—not player actions—and stays cautious while samples are small.</p>`;
+const ANALYSIS_REPORTS = Object.freeze({
+  playingTime: { title: "Playing time", description: "Average and total time on the field for every player." },
+  attemptsFor: { title: "Attempts for", description: "What helps the team create more attempts." },
+  attemptsAgainst: { title: "Attempts against", description: "What helps the team allow fewer opponent attempts." },
+  attemptsMargin: { title: "Attempts margin", description: "What improves the balance between attempts created and allowed." },
+  win: { title: "Win rate", description: "What is associated with a stronger chance of winning." },
+  margin: { title: "Score margin", description: "What is associated with scoring more goals than the opponent." }
+});
+
+const ANALYSIS_CATEGORY_REPORTS = Object.freeze({
+  team: { title: "Team baseline", description: "Your overall results, goals, and attempt rates." },
+  impact: { title: "Players & outcomes", description: "Which players share the field with stronger outcomes." },
+  formations: { title: "Formations & outcomes", description: "Compare results and pressure for each formation." },
+  lines: { title: "Players by position group", description: "Compare a player as keeper, defender, midfielder, or forward." },
+  positions: { title: "Players by exact position", description: "Compare a player in each named field position." },
+  fatigue: { title: "Team outcomes by time played", description: "The team pattern during the first, next, and later 15 minutes played." },
+  playerTime: { title: "Player outcomes by time played", description: "See each player's outcome pattern as their minutes build." }
+});
+
+function analysisReportReadiness(analysis, key) {
+  if (key === "playingTime") return { ...analysis.readiness.playingTime, readyCount: analysis.readiness.playingTime.ready ? 1 : 0, total: 1 };
+  const parts = ANALYSIS_CATEGORY_KEYS.map(category => analysis.outcomeReadiness[category][key]);
+  const readyCount = parts.filter(item => item.ready).length;
+  const best = parts.filter(item => !item.ready).sort((a, b) => b.progress - a.progress)[0];
+  return { ready: readyCount === parts.length, progress: best?.progress || 0, needs: best?.needs || "Record match data", readyCount, total: parts.length };
+}
+
+function outcomeMetricReportReadyCount(analysis) {
+  return ANALYSIS_OUTCOME_METRICS.filter(metric => ANALYSIS_CATEGORY_KEYS.every(category => analysis.outcomeReadiness[category][metric].ready)).length;
+}
+
+function analysisMenuCardHtml(analysis, key) {
+  const report = ANALYSIS_REPORTS[key];
+  const readiness = analysisReportReadiness(analysis, key);
+  const stateLabel = readiness.ready ? "Strong" : readiness.progress ? "Building" : "Needs data";
+  const requirement = readiness.ready
+    ? (key === "playingTime" ? `${analysis.matches} tracked match${analysis.matches === 1 ? "" : "es"}` : `All ${readiness.total} sections ready`)
+    : key === "playingTime" ? readiness.needs : `${readiness.readyCount} of ${readiness.total} sections ready · ${readiness.needs}`;
+  return `<button class="analysis-menu-card" type="button" data-open-analysis-report="${key}"><span class="analysis-menu-icon" aria-hidden="true">${readiness.ready ? "✓" : readiness.progress ? "◐" : "○"}</span><span><strong>${report.title}</strong><small>${report.description}</small><em>${escapeHtml(requirement)}</em></span><span class="report-strength ${readiness.ready ? "strong" : readiness.progress ? "building" : "weak"}">${stateLabel}</span><span class="analysis-entry-arrow" aria-hidden="true">→</span></button>`;
+}
+
+function analysisReportDetailHtml(analysis, key) {
+  const report = ANALYSIS_REPORTS[key];
+  if (key === "playingTime") {
+    const ready = analysis.readiness.playingTime.ready && analysis.players.length;
+    const source = ready ? analysis.players : DEMO_ANALYSIS.players;
+    return `${analysisDetailBarHtml()}<section class="analysis-report-card playing-time-report"><div class="analysis-report-head"><div><span class="eyebrow">Playing time</span><h3>${report.title}</h3><p>${report.description}</p></div>${sourcePill(ready)}</div><div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period"><button class="active" type="button" data-playing-time-view="game">Per game</button><button type="button" data-playing-time-view="season">Season total</button></div><div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(source, "game")}</div>${reportModelNote("Timeline duration aggregation")}${unlockFooter(analysis.readiness.playingTime, ready ? "Calculated from every on-field interval." : "Preview uses sample players and values.")}</section>`;
+  }
+  return `${analysisDetailBarHtml()}<header class="metric-report-heading"><span class="eyebrow">Outcome report</span><h2>${report.title}</h2><p>${report.description} Each section unlocks independently as enough matching data is recorded.</p></header>${outcomeReportsHtml(analysis, key)}`;
+}
+
+function analysisDetailBarHtml() {
+  return `<div class="analysis-detail-bar"><button type="button" class="analysis-detail-back secondary" data-analysis-menu-back>← All reports</button></div>`;
 }
 
 function sourcePill(ready) { return `<span class="source-pill ${ready ? "live" : "demo"}">${ready ? "Your data" : "Demo preview"}</span>`; }
@@ -485,8 +535,7 @@ function playingTimeListHtml(players, view) {
   }).join("");
 }
 
-function outcomeReportsHtml(analysis) {
-  const metrics = ["attemptsFor", "attemptsAgainst", "attemptsMargin", "win", "margin"];
+function outcomeReportsHtml(analysis, metric) {
   const reports = [
     ["team", "By Team", "The team baseline across completed matches and tracked attempts."],
     ["impact", "By Player", "Which players have the strongest positive or negative effect while on the field."],
@@ -497,30 +546,16 @@ function outcomeReportsHtml(analysis) {
     ["positions", "By Player Position Name", "How each player affects outcomes in a specific named field position."]
   ];
 
-  return reports.map(([category, title, description]) => {
-    const readyOutcomes = metrics.filter(metric => analysis.outcomeReadiness[category][metric].ready).length;
-    const activeMetric = metrics.find(metric => analysis.outcomeReadiness[category][metric].ready) || metrics[0];
-    const reportStatus = readyOutcomes === metrics.length
-      ? `<span class="source-pill live">Fully unlocked</span>`
-      : readyOutcomes
-        ? `<span class="source-pill partial">${readyOutcomes} / ${metrics.length} ready</span>`
-        : `<span class="source-pill demo">Demo preview</span>`;
-    return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}">
-      <div class="analysis-report-head"><div><h3>${title}</h3><p>${description}</p></div><div class="report-head-tools">${reportStatus}</div></div>
-      ${outcomeMetricToggle(analysis, category, activeMetric)}
-      <div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, activeMetric)}</div>
-      ${reportModelNote(category === "team" ? "Basic averages" : category === "formations" ? "Bayesian-smoothed formation stint averages" : "Bayesian hierarchical Poisson")}
-    </section>`;
-  }).join("");
+  return `<div class="metric-report-sections">${reports.map(([category]) => outcomeReportHtml(analysis, category, metric)).join("")}</div>`;
 }
 
-function outcomeMetricToggle(analysis, category, active = "attemptsFor") {
-  const metrics = [["attemptsFor", "Attempts for"], ["attemptsAgainst", "Attempts against"], ["attemptsMargin", "Attempts margin"], ["win", "Win rate"], ["margin", "Score margin"]];
-  return `<div class="breakdown-toggle outcome-metric-toggle" data-category-report="${category}" role="group" aria-label="Outcome shown in this report">${metrics.map(([key, label]) => {
-    const readiness = analysis.outcomeReadiness[category][key];
-    const demo = !readiness.ready;
-    return `<button class="${key === active ? "active " : ""}${demo ? "demo-preview" : "ready"}" type="button" data-metric-key="${key}" aria-label="${escapeHtml(`${label}${demo ? ", locked" : ", ready"}`)}" title="${escapeHtml(demo ? `Locked · ${readiness.needs}` : `${label} · your team data`)}" ${demo ? "disabled" : ""}>${label}</button>`;
-  }).join("")}</div>`;
+function outcomeReportHtml(analysis, category, metric) {
+  const report = ANALYSIS_CATEGORY_REPORTS[category];
+  const readiness = analysis.outcomeReadiness[category][metric];
+  const reportStatus = readiness.ready
+    ? `<span class="source-pill live">Your data</span>`
+    : `<span class="source-pill demo">Demo preview</span>`;
+  return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}"><div class="analysis-report-head"><div><h3>${report.title}</h3><p>${report.description}</p></div><div class="report-head-tools">${reportStatus}</div></div><div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, metric)}</div>${reportModelNote(category === "team" ? "Basic averages" : category === "formations" ? "Bayesian-smoothed formation stint averages" : "Bayesian hierarchical Poisson")}</section>`;
 }
 
 function teamOutcomeHtml(analysis, metric) {
@@ -763,16 +798,27 @@ function factorEffectLabel(report, value) {
 }
 
 function bindAnalysisControls(analysis) {
+  document.querySelectorAll("[data-analysis-team-back]").forEach(button => button.addEventListener("click", returnFromAnalysis));
+  document.querySelectorAll("[data-open-analysis-report]").forEach(button => button.addEventListener("click", () => {
+    const menu = $("#analysis-report-menu");
+    const detail = $("#analysis-report-detail");
+    detail.innerHTML = analysisReportDetailHtml(analysis, button.dataset.openAnalysisReport);
+    menu.classList.add("hidden");
+    detail.classList.remove("hidden");
+    $("#setup-view").classList.add("analysis-detail-open");
+    bindAnalysisControls(analysis);
+    window.scrollTo(0, 0);
+  }));
+  document.querySelectorAll("[data-analysis-menu-back]").forEach(button => button.addEventListener("click", () => {
+    $("#analysis-report-detail").classList.add("hidden");
+    $("#analysis-report-menu").classList.remove("hidden");
+    $("#setup-view").classList.remove("analysis-detail-open");
+    window.scrollTo(0, 0);
+  }));
   document.querySelectorAll("[data-playing-time-report] [data-playing-time-view]").forEach(button => button.addEventListener("click", () => {
     const controls = button.closest("[data-playing-time-report]");
     controls.querySelectorAll("[data-playing-time-view]").forEach(item => item.classList.toggle("active", item === button));
     $("#playing-time-list").innerHTML = playingTimeListHtml(analysis.readiness.playingTime.ready && analysis.players.length ? analysis.players : DEMO_ANALYSIS.players, button.dataset.playingTimeView);
-  }));
-  document.querySelectorAll("[data-category-report] [data-metric-key]:not(:disabled)").forEach(button => button.addEventListener("click", () => {
-    const controls = button.closest("[data-category-report]");
-    const category = controls.dataset.categoryReport;
-    controls.querySelectorAll("[data-metric-key]").forEach(item => item.classList.toggle("active", item === button));
-    $(`#category-explorer-${category}`).innerHTML = categoryOutcomeHtml(analysis, category, button.dataset.metricKey);
   }));
   document.querySelectorAll("[data-analysis-method-link]").forEach(button => button.addEventListener("click", () => openAnalysisMethod(analysis)));
 }
@@ -828,6 +874,8 @@ function renderScoreboard() {
   const c = state.config;
   $("#match-topbar-team").textContent = c.team;
   $("#team-name").textContent = c.team; $("#opponent-name").textContent = c.opponent;
+  $("#quick-team-name").textContent = c.team;
+  $("#quick-opponent-name").textContent = c.opponent;
   $("#match-label").textContent = `${c.competition} · ${c.date}`;
   $("#score-for").textContent = state.scoreFor; $("#score-against").textContent = state.scoreAgainst;
   const gameClock = formatClock(displayedGameTime(events, state.elapsedMs));
@@ -854,6 +902,7 @@ function scheduleSubstitutionHighlightRefresh() {
 function renderMatchControls() {
   const control = $("#match-control");
   control.classList.toggle("hidden", state.completed || (isBetweenPeriods() && state.currentPeriod >= state.config.periodCount));
+  const running = Boolean(clock?.running);
   const fieldReady = state.fieldCount === state.config.playersOnField;
   if (readinessMatchId !== state.matchId) {
     readinessMatchId = state.matchId;
@@ -866,7 +915,11 @@ function renderMatchControls() {
     fieldWasFull = fieldReady;
   }
   control.classList.toggle("kickoff-pulse", stoppedFullPulse);
-  control.textContent = clock?.running ? "Stop" : "Start";
+  control.innerHTML = running
+    ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>'
+    : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>';
+  control.setAttribute("aria-label", running ? "Pause timer" : state.currentPeriod ? "Resume timer" : "Start game");
+  control.title = running ? "Pause timer" : state.currentPeriod ? "Resume timer" : "Start game";
 }
 
 function isBetweenPeriods() {
@@ -889,11 +942,13 @@ function renderField() {
     return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""} ${recentlyOn ? "recently-on" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift${recentlyOn ? ", just moved on" : ""}`)}">${shirtHtml(id, p.name)}${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
-  $("#field").classList.toggle("dense-layout", bands.filter(band => positions.some(position => positionBand(position) === band)).length >= 5);
+  const bandCount = bands.filter(band => positions.some(position => positionBand(position) === band)).length;
+  $("#field").classList.toggle("dense-layout", state.config.playersOnField >= 7 || bandCount >= 5);
   $("#field").innerHTML = bands.map(band => {
     const row = positions.filter(position => positionBand(position) === band);
-    return row.length ? `<div class="position-band position-band-${band}" style="grid-template-columns:repeat(${Math.max(3, row.length)},minmax(0,1fr))">${row.map((position, index) => renderPosition(position, row.length, index)).join("")}</div>` : "";
-  }).join("") + `<button type="button" class="field-score field-score-for" data-field-score="goal_for">＋ Score for</button><button type="button" class="field-score field-score-against" data-field-score="goal_against">＋ Score against</button>`;
+    const centeredPair = band === "attack" && row.length === 2 ? " centered-pair" : "";
+    return row.length ? `<div class="position-band position-band-${band}${centeredPair}" style="grid-template-columns:repeat(${Math.max(3, row.length)},minmax(0,1fr))">${row.map((position, index) => renderPosition(position, row.length, index)).join("")}</div>` : "";
+  }).join("");
   $("#field").insertAdjacentHTML("beforeend", `<span class="pitch-goal opponent-goal" aria-hidden="true"></span><span class="pitch-goal keeper-goal" aria-hidden="true"></span>`);
 }
 
@@ -1146,8 +1201,20 @@ async function toggleClock() {
     if (period <= state.config.periodCount) { await append("period_started", clock.elapsedMs, { period }); startClock(); }
     return;
   }
-  if (clock.running) { clock.pause(); await append("clock_paused", clock.elapsedMs); }
+  if (clock.running) {
+    clock.pause();
+    await append("clock_paused", clock.elapsedMs);
+    setSaveStatus("Timer paused");
+  }
   else { await append("clock_resumed", clock.elapsedMs); startClock(); }
+}
+
+function returnFromAnalysis() {
+  $("#setup-view").classList.remove("analysis-open", "analysis-detail-open");
+  $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
+  $("#team-dashboard").classList.remove("hidden");
+  window.scrollTo(0, 0);
 }
 
 async function toggleHalf() {
@@ -1216,7 +1283,7 @@ function openPlayerMenu(playerId) {
   const onField = Object.values(state.field).includes(playerId);
   const unavailable = state.unavailable?.some(player => player.playerId === playerId);
   let actions = "";
-  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="assist">Assist by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
+  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="attempt">↗ Attempt by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="assist">Assist by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
   else if (unavailable) actions += `<button type="button" class="secondary" data-player-action="restore">Move to off field</button>`;
   else actions += `<button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
   actions += `<button type="button" class="secondary" data-player-action="number">Jersey number${playerNumberOf(playerId) ? `: #${escapeHtml(playerNumberOf(playerId))}` : ""}</button>`;
@@ -1225,6 +1292,7 @@ function openPlayerMenu(playerId) {
   document.querySelectorAll("[data-player-action]").forEach(button => button.addEventListener("click", async () => {
     $("#action-dialog").close();
     if (button.dataset.playerAction === "goal") await recordSimple("goal_for", { playerId });
+    if (button.dataset.playerAction === "attempt") await recordSimple("goal_attempt", { team: "for", playerId });
     if (button.dataset.playerAction === "assist") await recordSimple("assist_for", { playerId });
     if (button.dataset.playerAction === "off") await leaveForBench(playerId);
     if (button.dataset.playerAction === "restore") await moveToBench(playerId);
@@ -1399,7 +1467,6 @@ function timelineEventPayload(type, data, existing) {
 }
 
 function renderReportDetails() {
-  const matchMs = state.config.periodCount * state.config.periodMinutes * 60_000;
   const timeline = activeTimeline(events);
   const goals = timeline.filter(event => ["goal_for", "goal_against"].includes(event.type));
   const attempts = timeline.filter(event => event.type === "goal_attempt");
@@ -1409,29 +1476,65 @@ function renderReportDetails() {
   const lineupChanges = timeline.filter(event => event.type === "player_moved").length;
   const result = state.scoreFor > state.scoreAgainst ? "Win" : state.scoreFor < state.scoreAgainst ? "Loss" : "Draw";
   $("#match-report-summary").innerHTML = `<article><span>${state.completed ? "Result" : "Current result"}</span><strong>${state.scoreFor}–${state.scoreAgainst}</strong><small>${result}</small></article><article><span>Played</span><strong>${formatMinutes(state.elapsedMs)}</strong><small>${state.config.periodCount} × ${state.config.periodMinutes} min format</small></article><article><span>Lineup changes</span><strong>${lineupChanges}</strong><small>Substitutions and moves</small></article><article><span>Attempt diff.</span><strong class="${attemptsFor >= attemptsAgainst ? "positive-text" : "negative-text"}">${attempts.length ? formatSigned(attemptsFor - attemptsAgainst) : "—"}</strong><small>${attempts.length ? `${attemptsFor} for · ${attemptsAgainst} against` : "No attempts recorded"}</small></article>`;
-  $("#goal-lineups").innerHTML = goals.map(goal => {
-    const eventsThroughGoal = timeline.filter(event => event.gameTimeMs < goal.gameTimeMs || (event.gameTimeMs === goal.gameTimeMs && event.sequence <= goal.sequence));
-    const atGoal = projector.project(eventsThroughGoal, goal.gameTimeMs);
-    const players = Object.entries(atGoal.field).map(([position, id]) => `${atGoal.players[id].name} · ${shortPosition(position)}`).join(", ");
-    const scorer = goal.type === "goal_for" && goal.payload.playerId ? atGoal.players[goal.payload.playerId]?.name : null;
-    const nextGoalSequence = goals.find(item => item.sequence > goal.sequence)?.sequence ?? Infinity;
-    const assistEvent = goal.type === "goal_for" ? timeline.find(item => item.type === "assist_for" && item.gameTimeMs === goal.gameTimeMs && item.sequence > goal.sequence && item.sequence < nextGoalSequence) : null;
-    const assist = assistEvent?.payload.playerId ? atGoal.players[assistEvent.payload.playerId]?.name : null;
-    return `<article class="goal-lineup"><span class="goal-icon ${goal.type}">${goal.type === "goal_for" ? "+" : "-"}</span><div><strong>${goal.type === "goal_for" ? "Goal for" : "Goal against"} · ${formatClock(displayedGameTime(events, goal.gameTimeMs, goal.sequence))}${scorer ? ` · ${escapeHtml(scorer)} scored` : ""}${assist ? ` · ${escapeHtml(assist)} assisted` : ""}</strong><small>${escapeHtml(players || "No players recorded on field")}</small></div></article>`;
-  }).join("") || "<p class='hint'>Score events will show the exact on-field players here.</p>";
+  const matchEvents = timeline.filter(event => ["goal_for", "goal_against", "goal_attempt"].includes(event.type));
+  $("#match-event-flow").innerHTML = matchEventGraphHtml(matchEvents);
+  $("#goal-player-groups").innerHTML = goalPlayerGroupsHtml(timeline, goals);
   $("#attempts-report").innerHTML = attempts.length ? `<div class="match-attempt-bars"><article><div><span>${escapeHtml(state.config.team)}</span><strong>${attemptsFor}</strong></div><i><b style="width:${attemptsFor / attemptMax * 100}%"></b></i></article><article class="against"><div><span>${escapeHtml(state.config.opponent)}</span><strong>${attemptsAgainst}</strong></div><i><b style="width:${attemptsAgainst / attemptMax * 100}%"></b></i></article></div><p class="hint">Attempts are associated with the lineup on the field when each event was recorded.</p>` : "<p class='hint'>Use the Attempt buttons during the match to compare attacking pressure. Attempt tracking is optional.</p>";
-  $("#minutes-report").innerHTML = Object.values(state.players).sort((a, b) => b.totalMs - a.totalMs).map(p => `<article class="minute-card"><div class="minute-top"><strong>${escapeHtml(p.name)}</strong><strong>${formatMinutes(p.totalMs)}</strong></div><div class="bar"><span style="width:${Math.min(100, p.totalMs / matchMs * 100)}%"></span></div><small>${Object.entries(p.positionMs).map(([pos, ms]) => `${escapeHtml(positionName(pos))} ${formatMinutes(ms)}`).join(" · ") || "No field time yet"}${p.goalkeeperMs ? ` · GK ${formatMinutes(p.goalkeeperMs)}` : ""}</small></article>`).join("");
+  $("#minutes-report").innerHTML = Object.values(state.players).sort((a, b) => b.totalMs - a.totalMs).map(p => `<article class="minute-row"><strong>${escapeHtml(p.name)}</strong><span>${p.totalMs ? "On field" : "Did not play"}</span><b>${formatMinutes(p.totalMs)}</b></article>`).join("");
   const groupedStints = groupLineupStints(state.stints);
   const groupingNote = groupedStints.length < state.stints.length ? "<p class='hint'>Lineup changes within one minute are grouped as one substitution.</p>" : "";
   $("#stints-report").innerHTML = groupingNote + (groupedStints.map(stint => `<div class="stint-row"><strong>${formatClock(stint.startMs)}–${formatClock(stint.endMs)}</strong><span>${stint.goalsFor}–${stint.goalsAgainst}</span><span>${Object.entries(stint.field).map(([pos, id]) => `${nameOf(id)} (${shortPosition(pos)})`).join(", ")}</span></div>`).join("") || "<p class='hint'>Stints appear after the clock advances.</p>");
 }
 
-function renderReport() {
-  renderReportDetails();
-  document.querySelectorAll("#goal-lineups .goal-lineup small").forEach(lineup => lineup.remove());
-  const emptyMessage = $("#goal-lineups .hint");
-  if (emptyMessage) emptyMessage.textContent = "Goals will appear here.";
+function matchEventGraphHtml(matchEvents) {
+  if (!matchEvents.length) return "<p class='hint'>Goals and optional attempts will appear here in game order.</p>";
+  const plotted = matchEvents.map(event => ({ event, timeMs: displayedGameTime(events, event.gameTimeMs, event.sequence) }));
+  const maxMs = Math.max(60_000, displayedGameTime(events, state.elapsedMs), ...plotted.map(item => item.timeMs));
+  const left = 58, right = 366, forY = 47, againstY = 104, axisY = 143;
+  const x = timeMs => left + Math.min(1, Math.max(0, timeMs / maxMs)) * (right - left);
+  let scoreFor = 0, scoreAgainst = 0;
+  const marks = plotted.map(({ event, timeMs }) => {
+    const against = event.type === "goal_against" || (event.type === "goal_attempt" && event.payload?.team === "against");
+    const goal = event.type !== "goal_attempt";
+    if (event.type === "goal_for") scoreFor += 1;
+    if (event.type === "goal_against") scoreAgainst += 1;
+    const scorer = event.payload?.playerId ? state.players[event.payload.playerId]?.name : null;
+    const detail = `${formatClock(timeMs)} · ${against ? state.config.opponent : state.config.team} · ${goal ? `Goal${scorer ? ` by ${scorer}` : ""} · ${scoreFor}–${scoreAgainst}` : `Attempt${scorer ? ` by ${scorer}` : ""}`}`;
+    const eventX = x(timeMs), eventY = against ? againstY : forY;
+    return goal
+      ? `<g class="event-mark goal ${against ? "against" : "for"}" transform="translate(${eventX} ${eventY})"><title>${escapeHtml(detail)}</title><circle r="10"></circle><text y="3" text-anchor="middle">G</text></g>`
+      : `<g class="event-mark attempt ${against ? "against" : "for"}" transform="translate(${eventX} ${eventY})"><title>${escapeHtml(detail)}</title><circle r="5"></circle></g>`;
+  }).join("");
+  const ticks = [0, maxMs / 2, maxMs];
+  return `<div class="event-graph-legend"><span><i class="goal-key"></i>Goal</span><span><i class="attempt-key"></i>Attempt</span></div><div class="event-graph"><svg viewBox="0 0 380 165" role="img" aria-label="Goals and attempts over match time"><rect class="event-lane for" x="${left}" y="29" width="${right - left}" height="36" rx="8"></rect><rect class="event-lane against" x="${left}" y="86" width="${right - left}" height="36" rx="8"></rect><text class="event-lane-label" x="49" y="51" text-anchor="end">For</text><text class="event-lane-label" x="49" y="108" text-anchor="end">Against</text><line class="event-axis" x1="${left}" y1="${axisY}" x2="${right}" y2="${axisY}"></line>${ticks.map(tick => `<line class="event-tick" x1="${x(tick)}" y1="${axisY - 3}" x2="${x(tick)}" y2="${axisY + 3}"></line><text class="event-time-label" x="${x(tick)}" y="158" text-anchor="middle">${formatClock(tick)}</text>`).join("")}${marks}</svg></div>`;
 }
+
+function goalPlayerGroupsHtml(timeline, goals) {
+  const trackedPlayers = Object.values(state.players).filter(player => player.totalMs > 0).sort((a, b) => a.name.localeCompare(b.name));
+  const counts = new Map(trackedPlayers.map(player => [player.playerId, { for: 0, against: 0 }]));
+  goals.forEach(goal => {
+    const throughGoal = timeline.filter(event => event.gameTimeMs < goal.gameTimeMs || (event.gameTimeMs === goal.gameTimeMs && event.sequence <= goal.sequence));
+    const atGoal = projector.project(throughGoal, goal.gameTimeMs);
+    Object.values(atGoal.field).filter(Boolean).forEach(playerId => {
+      if (!counts.has(playerId)) return;
+      counts.get(playerId)[goal.type === "goal_for" ? "for" : "against"] += 1;
+    });
+  });
+  const sideHtml = (side, title, descending = false) => {
+    const max = Math.max(0, ...[...counts.values()].map(value => value[side]));
+    const pointValues = Array.from({ length: max + 1 }, (_, points) => points);
+    if (descending) pointValues.reverse();
+    const rows = pointValues.map(points => {
+      const names = trackedPlayers.filter(player => counts.get(player.playerId)[side] === points).map(player => player.name);
+      return `<article><strong>${points}</strong><div><span>${points === 1 ? "goal" : "goals"}</span><p>${names.length ? names.map(escapeHtml).join(" · ") : "No players"}</p></div></article>`;
+    });
+    return `<section><h3>${title}</h3>${rows.join("")}</section>`;
+  };
+  if (!trackedPlayers.length) return "<p class='hint'>Player groups appear after field time is tracked.</p>";
+  return `${sideHtml("for", "Goals for", true)}${sideHtml("against", "Goals against")}`;
+}
+
+function renderReport() { renderReportDetails(); }
 
 function switchTab(view) {
   document.querySelectorAll(".tab").forEach(tab => {
@@ -1461,7 +1564,9 @@ function openDialog(title, body, handler, showConfirm = true, closeOnConfirm = t
 
 function openMessage(title, message) { openDialog(title, `<p>${escapeHtml(message)}</p>`, () => {}); }
 function showUndo(label) { clearTimeout(toastTimer); $("#undo-label").textContent = label; $("#undo-toast").classList.remove("hidden"); toastTimer = setTimeout(() => $("#undo-toast").classList.add("hidden"), 6000); }
-function setSaveStatus(text, error = false) { $("#save-status").textContent = text; $("#save-status").style.color = error ? "#ff7068" : ""; }
+function setSaveStatus(text, error = false) {
+  if (error) $("#header-team-name").textContent = text;
+}
 function nameOf(id) { return state.players[id]?.name || state.config?.roster.find(p => p.playerId === id)?.name || "Unknown"; }
 function playerNumberOf(id) { return team?.players.find(player => player.playerId === id)?.number || ""; }
 function shortPlayerName(name) {
@@ -1551,7 +1656,7 @@ function eventLabel(event) {
     const moves = payload.moves || [];
     return moves.length === 1 ? `${nameOf(moves[0].playerId)} moved to ${moveDestinationName(moves[0].to)}` : `${moves.length} players moved`;
   }
-  return ({ match_created: "Match created", starting_lineup_confirmed: "Field started empty", layout_changed: `Layout changed to ${payload.name}`, period_started: `Period ${payload.period} started`, clock_paused: "Clock paused", clock_resumed: "Clock resumed", clock_adjusted: `Game time set to ${formatClock(payload.displayTimeMs)}`, period_ended: `Period ${payload.period} ended`, player_added: payload.player?.playerId ? `${nameOf(payload.player.playerId)} added` : "Player added", player_removed: `${nameOf(payload.playerId)} deleted`, goal_for: payload.playerId ? `Goal by ${nameOf(payload.playerId)}` : "Goal for", assist_for: `Assist by ${nameOf(payload.playerId)}`, goal_against: "Goal against", goal_attempt: payload.team === "against" ? "Opponent goal attempt" : "Our goal attempt", note_added: payload.category || "Note", match_completed: "Match completed", event_retracted: "Event undone", event_replaced: "Event corrected" })[event.type] || event.type;
+  return ({ match_created: "Match created", starting_lineup_confirmed: "Field started empty", layout_changed: `Layout changed to ${payload.name}`, period_started: `Period ${payload.period} started`, clock_paused: "Clock paused", clock_resumed: "Clock resumed", clock_adjusted: `Game time set to ${formatClock(payload.displayTimeMs)}`, period_ended: `Period ${payload.period} ended`, player_added: payload.player?.playerId ? `${nameOf(payload.player.playerId)} added` : "Player added", player_removed: `${nameOf(payload.playerId)} deleted`, goal_for: payload.playerId ? `Goal by ${nameOf(payload.playerId)}` : "Goal for", assist_for: `Assist by ${nameOf(payload.playerId)}`, goal_against: "Goal against", goal_attempt: payload.playerId ? `Attempt by ${nameOf(payload.playerId)}` : payload.team === "against" ? "Opponent goal attempt" : "Our goal attempt", note_added: payload.category || "Note", match_completed: "Match completed", event_retracted: "Event undone", event_replaced: "Event corrected" })[event.type] || event.type;
 }
 function eventDetail(event) {
   const p = event.payload || {};
