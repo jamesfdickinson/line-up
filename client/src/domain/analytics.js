@@ -22,7 +22,7 @@ const firstReady = (results, attempts) => report(
   attempts.progress >= results.progress ? attempts.needs : results.needs
 );
 const emptyPlayer = (playerId, name) => ({
-  playerId, name, minutesMs: 0, appearances: 0, completedAppearances: 0,
+  playerId, name, minutesMs: 0, appearances: 0, presentMatches: 0, completedAppearances: 0,
   wins: 0, draws: 0, losses: 0, finalMargin: 0,
   onFieldGoalsFor: 0, onFieldGoalsAgainst: 0,
   attemptsFor: 0, attemptsAgainst: 0
@@ -118,6 +118,8 @@ export function analyzeTeam(matchRecords) {
       const row = playerMap.get(player.playerId) || emptyPlayer(player.playerId, player.name);
       row.name = player.name;
       row.minutesMs += player.totalMs;
+      const rosterPlayer = state.config.roster.find(item => item.playerId === player.playerId);
+      if (player.totalMs > 0 || (rosterPlayer && rosterPlayer.status !== "unavailable")) row.presentMatches += 1;
       if (player.totalMs > 0) {
         row.appearances += 1;
         if (finalMatch) {
@@ -300,10 +302,10 @@ export function analyzeTeam(matchRecords) {
     }
   }
 
-  const players = [...playerMap.values()].filter(player => player.minutesMs > 0).map(player => ({
+  const players = [...playerMap.values()].filter(player => player.minutesMs > 0 || player.presentMatches > 0).map(player => ({
     ...player,
     seasonMinutes: player.minutesMs / 60_000,
-    averageMinutes: player.appearances ? player.minutesMs / player.appearances / 60_000 : 0,
+    averageMinutes: player.presentMatches ? player.minutesMs / player.presentMatches / 60_000 : 0,
     winRate: player.completedAppearances ? player.wins / player.completedAppearances : 0,
     scoreMargin: player.completedAppearances ? player.finalMargin / player.completedAppearances : 0,
     onFieldMarginPer60: player.minutesMs ? (player.onFieldGoalsFor - player.onFieldGoalsAgainst) * 3_600_000 / player.minutesMs : 0,
@@ -522,7 +524,7 @@ export function analyzeTeam(matchRecords) {
     positions: { win: resultPositionReadiness, margin: resultPositionReadiness, attemptsFor: attemptPositionReadiness, attemptsAgainst: attemptPositionReadiness, attemptsMargin: attemptPositionReadiness }
   };
   const readiness = {
-    playingTime: report(recorded.length >= REPORT_THRESHOLDS.playingTime.matches && players.length > 0, percent(recorded.length / REPORT_THRESHOLDS.playingTime.matches, players.length ? 1 : 0), players.length ? "Record one match" : "Record on-field player time"),
+    playingTime: report(recorded.length >= REPORT_THRESHOLDS.playingTime.matches && players.some(player => player.minutesMs > 0), percent(recorded.length / REPORT_THRESHOLDS.playingTime.matches, players.some(player => player.minutesMs > 0) ? 1 : 0), players.some(player => player.minutesMs > 0) ? "Record one match" : "Record on-field player time"),
     attempts: firstReady(resultAttemptReadiness, rawAttemptReadiness),
     impact: firstReady(resultImpactReadiness, attemptImpactReadiness),
     formations: firstReady(resultFormationReadiness, attemptFormationReadiness),

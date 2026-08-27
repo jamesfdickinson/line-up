@@ -616,7 +616,7 @@ function analysisOverviewBarHtml() {
 }
 
 const ANALYSIS_REPORTS = Object.freeze({
-  playingTime: { title: "Playing time", description: "Average and total time on the field for every player." },
+  playingTime: { title: "Playing time", description: "Average time when present and total time on the field for every player." },
   attemptsFor: { title: "Attempts for", description: "What helps the team create more attempts." },
   attemptsAgainst: { title: "Attempts against", description: "What helps the team allow fewer opponent attempts." },
   attemptsMargin: { title: "Attempts margin", description: "What improves the balance between attempts created and allowed." },
@@ -670,7 +670,7 @@ function analysisReportDetailHtml(analysis, key) {
   if (key === "playingTime") {
     const ready = analysis.readiness.playingTime.ready && analysis.players.length;
     const source = ready ? analysis.players : DEMO_ANALYSIS.players;
-    return `${analysisDetailBarHtml()}<section class="analysis-report-card playing-time-report"><div class="analysis-report-head"><div><span class="eyebrow">Playing time</span><h3>${report.title}</h3><p>${report.description}</p></div>${sourcePill(ready)}</div><div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period"><button class="active" type="button" data-playing-time-view="game">Per game</button><button type="button" data-playing-time-view="season">Season total</button></div><div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(source, "game")}</div>${reportModelNote("Timeline duration aggregation")}${unlockFooter(analysis.readiness.playingTime, ready ? "Calculated from every on-field interval." : "Preview uses sample players and values.")}</section>`;
+    return `${analysisDetailBarHtml()}<section class="analysis-report-card playing-time-report"><div class="analysis-report-head"><div><span class="eyebrow">Playing time</span><h3>${report.title}</h3><p>${report.description}</p></div>${sourcePill(ready)}</div><div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period"><button class="active" type="button" data-playing-time-view="game">Per match present</button><button type="button" data-playing-time-view="season">Season total</button></div><div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(source, "game")}</div>${reportModelNote("Timeline duration aggregation")}${unlockFooter(analysis.readiness.playingTime, ready ? "Matches marked Not here are excluded from that player's average." : "Preview uses sample players and values.")}</section>`;
   }
   if (key === "positionGuidance") return positionGuidanceReportHtml(analysis);
   return `${analysisDetailBarHtml()}<header class="metric-report-heading"><span class="eyebrow">Outcome report</span><h2>${report.title}</h2><p>${report.description} Each section unlocks independently as enough matching data is recorded.</p></header>${outcomeReportsHtml(analysis, key)}`;
@@ -775,17 +775,18 @@ function reportModelNote(name) {
 }
 
 function playingTimeListHtml(players, view) {
+  const presentMatches = player => Number.isFinite(player.presentMatches) ? player.presentMatches : player.appearances;
   const seasonMinutes = player => Number.isFinite(player.seasonMinutes)
     ? player.seasonMinutes
-    : player.averageMinutes * player.appearances;
+    : player.averageMinutes * presentMatches(player);
   const value = player => view === "season" ? seasonMinutes(player) : player.averageMinutes;
   const source = [...players].sort((a, b) => value(b) - value(a)).slice(0, 6);
   const maxMinutes = Math.max(1, ...source.map(value));
   return source.map(player => {
-    const appearances = `${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`;
+    const presence = `${presentMatches(player)} match${presentMatches(player) === 1 ? "" : "es"} present`;
     const detail = view === "season"
-      ? `${appearances} · ${Math.round(player.averageMinutes)}m per game`
-      : `${appearances} · ${Math.round(seasonMinutes(player))}m this season`;
+      ? `${presence} · ${Math.round(player.averageMinutes)}m average`
+      : `${presence} · ${Math.round(seasonMinutes(player))}m this season`;
     const label = view === "season" ? `${Math.round(seasonMinutes(player))}m` : `${Math.round(player.averageMinutes)}m`;
     return `<article><div><strong>${escapeHtml(player.name)}</strong><small>${detail}</small></div><span class="time-bar"><i style="width:${value(player) / maxMinutes * 100}%"></i></span><b>${label}</b></article>`;
   }).join("");
@@ -858,7 +859,7 @@ function playerOutcomeHtml(analysis, metric) {
   const roster = team?.players?.length ? team.players : DEMO_ANALYSIS.players.map(player => ({ playerId: player.name, name: player.name }));
   const rows = roster.map(player => {
     const recorded = recordedById.get(player.playerId) || analysis.players.find(item => item.name === player.name);
-    return recorded ? { ...recorded, noData: false } : { playerId: player.playerId, name: player.name, noData: true, minutesMs: 0, appearances: 0 };
+    return recorded?.minutesMs > 0 ? { ...recorded, noData: false } : { ...recorded, playerId: player.playerId, name: player.name, noData: true, minutesMs: 0, appearances: 0 };
   });
   const value = player => metric === "win" ? player.winRate * 100
     : metric === "margin" ? player.onFieldMarginPer60
@@ -876,7 +877,12 @@ function playerOutcomeHtml(analysis, metric) {
     if (metric === "attemptsFor" || metric === "attemptsAgainst") return `${value(player).toFixed(1)} / 60`;
     return `${formatSigned(value(player), 1)} / 60`;
   };
-  return `<div class="all-player-outcome-list"><div class="all-player-outcome-head"><span>Player</span><span>Evidence</span><span>${escapeHtml(metricPresentation(metric).label)}</span></div>${rows.map((player, index) => `<article><span class="player-outcome-rank">${player.noData ? "—" : index + 1}</span><div><strong>${escapeHtml(player.name)}</strong><small>${player.noData ? "No field time recorded" : `${Math.round(player.minutesMs / 60_000)} min · ${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`}</small></div><span>${player.noData ? "Needs field time" : metric === "win" || metric === "margin" ? `${player.completedAppearances || 0} completed matches` : `${player.attemptsFor + player.attemptsAgainst} shared attempts`}</span><b>${valueLabel(player)}</b></article>`).join("")}</div>`;
+  const values = rows.filter(player => !player.noData).map(value);
+  const low = values.length ? Math.min(...values) : 0;
+  const high = values.length ? Math.max(...values) : 0;
+  const position = player => high === low ? 50 : (value(player) - low) / (high - low) * 100;
+  const rangeLabel = number => metric === "win" ? `${Math.round(number)}%` : Number(number).toFixed(1);
+  return `<div class="all-player-outcome-list"><div class="all-player-outcome-head"><span>Player</span><span>Evidence</span><span>${escapeHtml(metricPresentation(metric).label)}<small>${rangeLabel(low)} to ${rangeLabel(high)}</small></span></div>${rows.map((player, index) => `<article><span class="player-outcome-rank">${player.noData ? "—" : index + 1}</span><div><strong>${escapeHtml(player.name)}</strong><small>${player.noData ? "No field time recorded" : `${Math.round(player.minutesMs / 60_000)} min · ${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`}</small></div><span>${player.noData ? "Needs field time" : metric === "win" || metric === "margin" ? `${player.completedAppearances || 0} completed matches` : `${player.attemptsFor + player.attemptsAgainst} shared attempts`}</span><span class="player-outcome-value">${player.noData ? `<b>—</b>` : `<span class="player-team-range" title="Team range ${rangeLabel(low)} to ${rangeLabel(high)}; ${player.name} ${valueLabel(player)}"><i style="left:${position(player)}%"></i></span><b>${valueLabel(player)}</b>`}</span></article>`).join("")}</div>`;
 }
 
 function openAnalysisMethod(analysis) {

@@ -386,6 +386,25 @@ test("playing-time analysis supports per-game averages and season totals", () =>
   assert.equal(player.seasonMinutes, 25);
 });
 
+test("average playing time counts present bench matches but excludes not-here matches", () => {
+  const playedState = new LineupProjector().project(base, 15 * 60_000);
+  const benchLineup = { ...base[1], payload: { assignments: [{ playerId: "p1", position: "gk" }], goalkeeperId: "p1" } };
+  const benchEvents = [base[0], benchLineup, base[2]];
+  const benchState = new LineupProjector().project(benchEvents, 10 * 60_000);
+  const absentEvent = moved(4, 0, { playerId: "p2", from: "forward_striker", to: "not_here" });
+  const absentEvents = [...base, absentEvent];
+  const absentState = new LineupProjector().project(absentEvents, 10 * 60_000);
+  const analysis = analyzeTeam([
+    { events: base, state: playedState },
+    { events: benchEvents, state: benchState },
+    { events: absentEvents, state: absentState }
+  ]);
+  const player = analysis.players.find(item => item.playerId === "p2");
+  assert.equal(player.appearances, 1);
+  assert.equal(player.presentMatches, 2);
+  assert.equal(player.averageMinutes, 7.5);
+});
+
 test("time-on-field outcomes use each player's accumulated minutes instead of the match clock", () => {
   const substitute = moved(4, 20 * 60_000,
     { playerId: "p2", from: "forward_striker", to: "off_field" },
