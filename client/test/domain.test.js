@@ -13,6 +13,9 @@ import { createId } from "../src/domain/id.js";
 import { analyzeTeam, MIN_FINISHED_MATCH_MS } from "../src/domain/analytics.js";
 import { recentSubstitutionChanges, SUBSTITUTION_HIGHLIGHT_MS } from "../src/domain/substitution-highlight.js";
 import { groupLineupStints } from "../src/domain/lineup-stint.js";
+import { positionGuidanceReadiness, rankPlayerDeployments } from "../src/domain/position-guidance.js";
+import { createSampleDataset, sampleDataOptions } from "../src/domain/sample-data.js";
+import { createFullBackup, mergeEventHistories, parseFullBackup } from "../src/domain/backup.js";
 
 const matchId = "match-1";
 const roster = ["Alex", "Blair", "Casey"].map((name, index) => ({ playerId: `p${index + 1}`, name, status: "available" }));
@@ -460,4 +463,74 @@ test("the goalkeeper assignment follows the dedicated keeper position", () => {
   state = new LineupProjector().project([...base, moved(4, 100_000, { playerId: "p1", from: "gk", to: "back_left_fullback" })], 100_000);
   assert.equal(state.goalkeeperId, null);
   assert.equal(state.field.gk, undefined);
+});
+
+test("position guidance ranks a player's tested roles for different objectives", () => {
+  const rows = [
+    { playerId: "p1", name: "Alex", line: "Forward", minutesMs: 60 * 60_000, attemptsFor: 15, attemptsAgainst: 10 },
+    { playerId: "p1", name: "Alex", line: "Defense", minutesMs: 60 * 60_000, attemptsFor: 7, attemptsAgainst: 4 }
+  ];
+  const attack = rankPlayerDeployments(rows, "p1", "attack");
+  assert.equal(attack[0].line, "Forward");
+  assert.ok(attack[0].guidanceLow < attack[0].guidanceEffect);
+  assert.ok(attack[0].guidanceHigh > attack[0].guidanceEffect);
+  assert.equal(rankPlayerDeployments(rows, "p1", "defend")[0].line, "Defense");
+});
+
+test("position guidance requires attempts and comparable broad-role samples", () => {
+  const analysis = {
+    attemptMatches: 3, attemptsFor: 12, attemptsAgainst: 10,
+    playerLines: [
+      { playerId: "p1", minutesMs: 30 * 60_000 },
+      { playerId: "p1", minutesMs: 35 * 60_000 }
+    ]
+  };
+  const readiness = positionGuidanceReadiness(analysis);
+  assert.equal(readiness.ready, true);
+  assert.equal(readiness.comparablePlayers, 1);
+});
+
+test("built-in sample datasets create progressively deeper report data", () => {
+  const projector = new LineupProjector();
+  const summaries = sampleDataOptions().map(option => {
+    const dataset = createSampleDataset(option.key);
+    const matchIds = [...new Set(dataset.events.map(item => item.matchId))];
+    const records = matchIds.map(id => {
+      const events = dataset.events.filter(item => item.matchId === id);
+      return { events, state: projector.project(events) };
+    });
+    assert.equal(matchIds.length, option.matches);
+    assert.ok(records.every(record => !record.state.periodRunning && record.state.elapsedMs === 40 * 60_000));
+    return analyzeTeam(records);
+  });
+  assert.equal(summaries[0].completedMatches, 2);
+  assert.equal(summaries[1].completedMatches, 5);
+  assert.equal(summaries[2].completedMatches, 8);
+  assert.ok(summaries[2].attemptsFor + summaries[2].attemptsAgainst > summaries[0].attemptsFor + summaries[0].attemptsAgainst);
+  assert.ok(summaries[2].playerLines.some(row => row.line === "Forward"));
+  assert.ok(summaries[2].playerLines.some(row => row.line === "Defense"));
+});
+
+test("full backups round-trip teams and validated match events", () => {
+  const dataset = createSampleDataset("early");
+  const meta = [{ key: "teams", value: [dataset.team] }, { key: "activeTeamId", value: dataset.team.teamId }];
+  const encoded = JSON.stringify(createFullBackup(meta, dataset.events, "2026-08-26T00:00:00.000Z"));
+  const restored = parseFullBackup(encoded);
+  assert.equal(restored.meta[0].value[0].name, dataset.team.name);
+  assert.equal(restored.events.length, dataset.events.length);
+  assert.equal(restored.exportedAt, "2026-08-26T00:00:00.000Z");
+  assert.throws(() => parseFullBackup('{"format":"something-else","version":1,"meta":[],"events":[]}'), /full LineUp JD backup/);
+});
+
+test("backup event imports are additive, repeatable, and conflict-safe", () => {
+  const dataset = createSampleDataset("early");
+  const split = Math.floor(dataset.events.length / 2);
+  const firstMerge = mergeEventHistories(dataset.events.slice(0, split), dataset.events);
+  assert.equal(firstMerge.events.length, dataset.events.length);
+  assert.equal(firstMerge.addedEvents.length, dataset.events.length - split);
+  const repeated = mergeEventHistories(firstMerge.events, dataset.events);
+  assert.equal(repeated.addedEvents.length, 0);
+  const conflicting = structuredClone(dataset.events[0]);
+  conflicting.payload.team = "Changed team";
+  assert.throws(() => mergeEventHistories(dataset.events, [conflicting]), /Event conflict/);
 });

@@ -11,6 +11,9 @@ import { createId } from "./domain/id.js";
 import { analyzeTeam } from "./domain/analytics.js";
 import { recentSubstitutionChanges } from "./domain/substitution-highlight.js";
 import { groupLineupStints } from "./domain/lineup-stint.js";
+import { BROAD_ROLE_SAMPLE_MS, EXACT_POSITION_SAMPLE_MS, positionGuidanceReadiness, rankPlayerDeployments } from "./domain/position-guidance.js";
+import { createSampleDataset, sampleDataOptions } from "./domain/sample-data.js";
+import { createFullBackup, mergeEventHistories, parseFullBackup } from "./domain/backup.js";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -41,8 +44,8 @@ const SILENT_EVENT_TYPES = new Set([
 ]);
 const ANALYSIS_CATEGORY_KEYS = ["team", "impact", "formations", "lines", "positions", "fatigue", "playerTime"];
 const ANALYSIS_OUTCOME_METRICS = ["attemptsFor", "attemptsAgainst", "attemptsMargin", "win", "margin"];
-const ANALYSIS_REPORT_COUNT = ANALYSIS_OUTCOME_METRICS.length + 1;
-const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_KEYS.length * ANALYSIS_OUTCOME_METRICS.length + 1;
+const ANALYSIS_REPORT_COUNT = ANALYSIS_OUTCOME_METRICS.length + 2;
+const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_KEYS.length * ANALYSIS_OUTCOME_METRICS.length + 2;
 const DEMO_ANALYSIS = Object.freeze({
   matches: 8, completedMatches: 8, wins: 5, draws: 1, losses: 2, winRate: .625,
   scoreMargin: 6, goalsFor: 18, goalsAgainst: 12, attemptsFor: 91, attemptsAgainst: 67,
@@ -185,7 +188,6 @@ async function init() {
     team = teams.find(item => item.teamId === activeTeamId) || teams[0] || null;
     await persistTeams();
     await renderTeamDashboard();
-    if (teams.length > 1) openTeamMenu();
     setSaveStatus("Saved on this device");
   } catch (error) {
     setSaveStatus("Storage unavailable", true);
@@ -200,6 +202,7 @@ function bindStaticEvents() {
   $("#team-name-input").addEventListener("change", saveTeam);
   $("#create-new-match").addEventListener("click", createBlankMatch);
   $("#analysis-card").addEventListener("click", showSeasonAnalysis);
+  $("#data-tools-link").addEventListener("click", openDataTools);
   $("#team-menu").addEventListener("click", openTeamMenu);
   $("#add-first-team").addEventListener("click", openAddTeam);
   $("#back-to-team").addEventListener("click", returnFromAnalysis);
@@ -253,6 +256,160 @@ function openTeamMenu() {
     if (select) { $("#action-dialog").close(); selectTeam(select.dataset.teamSelect); }
     if (remove) { $("#action-dialog").close(); openTeamOptions(remove.dataset.teamDelete); }
   };
+}
+
+function openDataTools() {
+  const cards = sampleDataOptions().map(sample => `<button type="button" class="sample-data-card" data-load-sample="${sample.key}"><span><strong>${escapeHtml(sample.name.replace("Sample · ", ""))}</strong><small>${sample.matches} match${sample.matches === 1 ? "" : "es"}</small></span><p>${escapeHtml(sample.description)}</p><em>Load as a new team →</em></button>`).join("");
+  openDialog("Data tools", `<section class="backup-tools"><h3>Backup</h3><p>Export everything or add new data from another device. Existing teams and matches remain; deletions made elsewhere are not removed.</p><div><button type="button" class="secondary" data-export-backup>Export all data</button><button type="button" class="secondary" data-import-backup>Load from file</button><input type="file" data-backup-file accept=".json,application/json" hidden></div><small>For the same team on two devices, first load a primary-device backup onto the second device so both share the same team identity.</small></section><section class="sample-data-tools"><h3>Test data</h3><p class="sample-data-note">Samples are added as new teams and do not replace existing data.</p><div class="sample-data-list">${cards}</div></section><section class="clear-data-tools"><h3>Reset</h3><button type="button" class="secondary danger-action" data-clear-all>Clear all data</button></section>`, null, false);
+  const fileInput = $("[data-backup-file]");
+  fileInput.addEventListener("change", async () => {
+    const file = fileInput.files?.[0];
+    if (!file) return;
+    try {
+      const backup = parseFullBackup(await file.text());
+      const storedTeams = backup.meta.find(record => record.key === "teams")?.value || [];
+      const matchCount = new Set(backup.events.map(event => event.matchId)).size;
+      $("#action-dialog").close();
+      openDialog("Add backup data?", `<p>This backup contains <strong>${Array.isArray(storedTeams) ? storedTeams.length : 0} team${storedTeams?.length === 1 ? "" : "s"}</strong> and <strong>${matchCount} match${matchCount === 1 ? "" : "es"}</strong>.</p><p>New teams, players, matches, and events will be added. Data already on this device will remain.</p>`, async () => mergeFullBackup(backup));
+      $("#dialog-confirm").textContent = "Add data";
+    } catch (error) {
+      $("#dialog-error").textContent = error.message;
+    }
+  });
+  $("#dialog-body").onclick = async event => {
+    const button = event.target.closest("[data-load-sample]");
+    if (event.target.closest("[data-export-backup]")) {
+      await exportFullBackup();
+      $("#action-dialog").close();
+      return;
+    }
+    if (event.target.closest("[data-import-backup]")) { fileInput.click(); return; }
+    if (event.target.closest("[data-clear-all]")) { $("#action-dialog").close(); openClearAllData(); return; }
+    if (button && !button.disabled) {
+      button.disabled = true;
+      $("#dialog-error").textContent = "Loading…";
+      try {
+        await loadSampleData(button.dataset.loadSample);
+        $("#action-dialog").close();
+      } catch (error) {
+        button.disabled = false;
+        $("#dialog-error").textContent = error.message;
+      }
+    }
+  };
+}
+
+async function exportFullBackup() {
+  const backup = createFullBackup(await store.allMeta(), await store.allEvents());
+  downloadFile(`lineupjd-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(backup, null, 2), "application/json");
+  $("#data-tools-status").textContent = "Backup exported";
+}
+
+async function mergeFullBackup(backup) {
+  const localEvents = await store.allEvents();
+  const localMeta = await store.allMeta();
+  const eventMerge = mergeEventHistories(localEvents, backup.events);
+  const incomingStoredTeams = backup.meta.find(record => record.key === "teams")?.value;
+  const incomingLegacyTeam = backup.meta.find(record => record.key === "team")?.value;
+  const incomingTeams = normalizeTeams(incomingStoredTeams || (incomingLegacyTeam ? [incomingLegacyTeam] : []));
+  const teamMerge = mergeTeamCollections(teams, incomingTeams);
+  const metaByKey = new Map(localMeta.map(record => [record.key, structuredClone(record)]));
+  for (const record of backup.meta) {
+    if (["teams", "team", "activeTeamId", "activeMatchId"].includes(record.key)) continue;
+    if (record.key.startsWith("analysisReportSeen:")) {
+      const current = Number(metaByKey.get(record.key)?.value || 0);
+      metaByKey.set(record.key, { key: record.key, value: Math.max(current, Number(record.value || 0)) });
+    } else if (!metaByKey.has(record.key)) metaByKey.set(record.key, structuredClone(record));
+  }
+  const localActiveTeamId = team?.teamId;
+  const incomingActiveTeamId = backup.meta.find(record => record.key === "activeTeamId")?.value;
+  teams = teamMerge.teams;
+  team = teams.find(item => item.teamId === localActiveTeamId)
+    || teams.find(item => item.teamId === incomingActiveTeamId)
+    || teams[0]
+    || null;
+  metaByKey.set("teams", { key: "teams", value: teams });
+  metaByKey.set("activeTeamId", { key: "activeTeamId", value: team?.teamId || null });
+  metaByKey.set("team", { key: "team", value: team });
+  metaByKey.delete("activeMatchId");
+  await store.replaceAll({ events: eventMerge.events, meta: [...metaByKey.values()] });
+  await persistTeams();
+  await resetAfterDataChange();
+  const localMatchIds = new Set(localEvents.map(event => event.matchId));
+  const newMatchCount = new Set(eventMerge.addedEvents.map(event => event.matchId).filter(id => !localMatchIds.has(id))).size;
+  const parts = [
+    teamMerge.addedTeams ? `${teamMerge.addedTeams} team${teamMerge.addedTeams === 1 ? "" : "s"}` : "",
+    newMatchCount ? `${newMatchCount} match${newMatchCount === 1 ? "" : "es"}` : "",
+    eventMerge.addedEvents.length && !newMatchCount ? `${eventMerge.addedEvents.length} new event${eventMerge.addedEvents.length === 1 ? "" : "s"}` : ""
+  ].filter(Boolean);
+  $("#data-tools-status").textContent = parts.length ? `${parts.join(" and ")} added` : "Already up to date";
+}
+
+function mergeTeamCollections(localTeams, incomingTeams) {
+  const merged = new Map(localTeams.map(item => [item.teamId, structuredClone(item)]));
+  let addedTeams = 0;
+  for (const incoming of incomingTeams) {
+    const existing = merged.get(incoming.teamId);
+    if (!existing) {
+      merged.set(incoming.teamId, structuredClone(incoming));
+      addedTeams += 1;
+      continue;
+    }
+    const players = new Map(existing.players.map(player => [player.playerId, player]));
+    for (const player of incoming.players) {
+      const localPlayer = players.get(player.playerId);
+      players.set(player.playerId, localPlayer ? { ...player, ...localPlayer } : structuredClone(player));
+    }
+    merged.set(incoming.teamId, { ...incoming, ...existing, players: [...players.values()] });
+  }
+  return { teams: [...merged.values()], addedTeams };
+}
+
+function openClearAllData() {
+  openDialog("Clear all data?", "<p>This permanently removes every team, player, match, event, and report from this device.</p><p>Export a backup first if you may need this data again.</p>", clearAllData);
+  $("#dialog-confirm").textContent = "Clear all data";
+  $("#dialog-confirm").classList.add("danger-confirm");
+}
+
+async function clearAllData() {
+  await store.clearAll();
+  teams = [];
+  team = null;
+  await resetAfterDataChange();
+  $("#data-tools-status").textContent = "All data cleared";
+}
+
+async function resetAfterDataChange() {
+  clock?.destroy();
+  clock = null;
+  matchId = null;
+  events = [];
+  state = projector.empty();
+  document.body.classList.remove("match-open");
+  $("#match-view").classList.add("hidden");
+  $("#setup-view").classList.remove("hidden", "analysis-open", "analysis-detail-open");
+  $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
+  $("#team-dashboard").classList.remove("hidden");
+  await renderTeamDashboard();
+  window.scrollTo(0, 0);
+}
+
+async function loadSampleData(kind) {
+  const baseName = sampleDataOptions().find(sample => sample.key === kind)?.name || "Sample team";
+  const matchingNames = teams.filter(item => item.name === baseName || item.name.startsWith(`${baseName} (`)).length;
+  const suffix = matchingNames ? ` (${matchingNames + 1})` : "";
+  const dataset = createSampleDataset(kind, suffix);
+  await store.appendMany(dataset.events);
+  team = dataset.team;
+  teams.push(team);
+  await persistTeams();
+  $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
+  $("#setup-view").classList.remove("analysis-open", "analysis-detail-open");
+  await renderTeamDashboard();
+  $("#data-tools-status").textContent = `${team.name} loaded`;
+  window.scrollTo(0, 0);
 }
 
 function openTeamOptions(teamId) {
@@ -350,7 +507,7 @@ async function renderTeamDashboard() {
   const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id))).sort((a, b) => b.state.config.date.localeCompare(a.state.config.date));
   const matches = records.map(record => record.state);
   const analysis = analyzeTeam(records);
-  const readyReportCount = outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready);
+  const readyReportCount = outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready) + Number(positionGuidanceReadiness(analysis).ready);
   const readyPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
   const seenReadyCount = Number((await store.getMeta(`analysisReportSeen:${team.teamId}`))?.value || 0);
   const newReports = Math.max(0, readyReportCount - seenReadyCount);
@@ -425,7 +582,7 @@ async function showSeasonAnalysis() {
   const analysis = analyzeTeam(records);
   $("#season-summary").innerHTML = teamAnalysisHtml(analysis);
   bindAnalysisControls(analysis);
-  await store.setMeta(`analysisReportSeen:${team.teamId}`, outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready));
+  await store.setMeta(`analysisReportSeen:${team.teamId}`, outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready) + Number(positionGuidanceReadiness(analysis).ready));
   $("#analysis-new-badge").classList.add("hidden");
   $("#team-dashboard").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden");
 }
@@ -441,7 +598,8 @@ function teamAnalysisHtml(analysis) {
   const groups = [
     ["Playing time", "Track minutes and appearances without recording any goals or attempts.", ["playingTime"]],
     ["Attack & defense", "Explore each pressure measure separately. These reports unlock from recorded attempts.", ["attemptsFor", "attemptsAgainst", "attemptsMargin"]],
-    ["Match results", "Explore results separately from attempt tracking. These reports unlock from finished matches and goals.", ["win", "margin"]]
+    ["Match results", "Explore results separately from attempt tracking. These reports unlock from finished matches and goals.", ["win", "margin"]],
+    ["Guidance", "Explore position ideas supported by recorded match data.", ["positionGuidance"]]
   ];
   return `
     ${analysisOverviewBarHtml()}
@@ -463,7 +621,8 @@ const ANALYSIS_REPORTS = Object.freeze({
   attemptsAgainst: { title: "Attempts against", description: "What helps the team allow fewer opponent attempts." },
   attemptsMargin: { title: "Attempts margin", description: "What improves the balance between attempts created and allowed." },
   win: { title: "Win rate", description: "What is associated with a stronger chance of winning." },
-  margin: { title: "Score margin", description: "What is associated with scoring more goals than the opponent." }
+  margin: { title: "Score margin", description: "What is associated with scoring more goals than the opponent." },
+  positionGuidance: { title: "Position guidance", description: "Rank a player's tested roles using their attacking and defensive attempt patterns." }
 });
 
 const ANALYSIS_CATEGORY_REPORTS = Object.freeze({
@@ -478,6 +637,10 @@ const ANALYSIS_CATEGORY_REPORTS = Object.freeze({
 
 function analysisReportReadiness(analysis, key) {
   if (key === "playingTime") return { ...analysis.readiness.playingTime, readyCount: analysis.readiness.playingTime.ready ? 1 : 0, total: 1 };
+  if (key === "positionGuidance") {
+    const readiness = positionGuidanceReadiness(analysis);
+    return { ...readiness, readyCount: readiness.comparablePlayers, total: Math.max(1, readiness.comparablePlayers) };
+  }
   const parts = ANALYSIS_CATEGORY_KEYS.map(category => analysis.outcomeReadiness[category][key]);
   const readyCount = parts.filter(item => item.ready).length;
   const best = parts.filter(item => !item.ready).sort((a, b) => b.progress - a.progress)[0];
@@ -491,10 +654,14 @@ function outcomeMetricReportReadyCount(analysis) {
 function analysisMenuCardHtml(analysis, key) {
   const report = ANALYSIS_REPORTS[key];
   const readiness = analysisReportReadiness(analysis, key);
-  const stateLabel = readiness.ready ? "Strong" : readiness.progress ? "Building" : "Needs data";
+  const stateLabel = readiness.ready ? (key === "positionGuidance" ? "Available" : "Strong") : readiness.progress ? "Building" : "Needs data";
   const requirement = readiness.ready
-    ? (key === "playingTime" ? `${analysis.matches} tracked match${analysis.matches === 1 ? "" : "es"}` : `All ${readiness.total} sections ready`)
-    : key === "playingTime" ? readiness.needs : `${readiness.readyCount} of ${readiness.total} sections ready · ${readiness.needs}`;
+    ? (key === "playingTime"
+      ? `${analysis.matches} tracked match${analysis.matches === 1 ? "" : "es"}`
+      : key === "positionGuidance"
+        ? `${readiness.comparablePlayers} player${readiness.comparablePlayers === 1 ? " has" : "s have"} comparable broad roles`
+        : `All ${readiness.total} sections ready`)
+    : key === "playingTime" || key === "positionGuidance" ? readiness.needs : `${readiness.readyCount} of ${readiness.total} sections ready · ${readiness.needs}`;
   return `<button class="analysis-menu-card" type="button" data-open-analysis-report="${key}"><span class="analysis-menu-icon" aria-hidden="true">${readiness.ready ? "✓" : readiness.progress ? "◐" : "○"}</span><span><strong>${report.title}</strong><small>${report.description}</small><em>${escapeHtml(requirement)}</em></span><span class="report-strength ${readiness.ready ? "strong" : readiness.progress ? "building" : "weak"}">${stateLabel}</span><span class="analysis-entry-arrow" aria-hidden="true">→</span></button>`;
 }
 
@@ -505,7 +672,96 @@ function analysisReportDetailHtml(analysis, key) {
     const source = ready ? analysis.players : DEMO_ANALYSIS.players;
     return `${analysisDetailBarHtml()}<section class="analysis-report-card playing-time-report"><div class="analysis-report-head"><div><span class="eyebrow">Playing time</span><h3>${report.title}</h3><p>${report.description}</p></div>${sourcePill(ready)}</div><div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period"><button class="active" type="button" data-playing-time-view="game">Per game</button><button type="button" data-playing-time-view="season">Season total</button></div><div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(source, "game")}</div>${reportModelNote("Timeline duration aggregation")}${unlockFooter(analysis.readiness.playingTime, ready ? "Calculated from every on-field interval." : "Preview uses sample players and values.")}</section>`;
   }
+  if (key === "positionGuidance") return positionGuidanceReportHtml(analysis);
   return `${analysisDetailBarHtml()}<header class="metric-report-heading"><span class="eyebrow">Outcome report</span><h2>${report.title}</h2><p>${report.description} Each section unlocks independently as enough matching data is recorded.</p></header>${outcomeReportsHtml(analysis, key)}`;
+}
+
+function positionGuidanceReportHtml(analysis) {
+  const playerIds = [...new Set(analysis.playerLines.map(row => row.playerId))];
+  const rankedIds = playerIds.sort((a, b) => {
+    const rowsFor = id => analysis.playerLines.filter(row => row.playerId === id);
+    const supportedFor = id => rowsFor(id).filter(row => row.minutesMs >= BROAD_ROLE_SAMPLE_MS).length;
+    const minutesFor = id => rowsFor(id).reduce((sum, row) => sum + row.minutesMs, 0);
+    return supportedFor(b) - supportedFor(a) || minutesFor(b) - minutesFor(a);
+  });
+  const selectedPlayerId = rankedIds[0] || "";
+  const options = rankedIds.map(playerId => {
+    const name = analysis.playerLines.find(row => row.playerId === playerId)?.name || playerId;
+    return `<option value="${escapeHtml(playerId)}">${escapeHtml(name)}</option>`;
+  }).join("");
+  return `${analysisDetailBarHtml()}<header class="metric-report-heading position-guidance-heading"><span class="eyebrow">Player positions</span><h2>Position guidance</h2><p>Use recorded attempt patterns to compare positions a player has actually tried.</p></header>
+    <section class="analysis-report-card position-guidance-report">
+      <div class="guidance-controls"><label><span>Player</span><select data-position-guidance-player ${rankedIds.length ? "" : "disabled"}>${options || "<option>No tracked players</option>"}</select></label><div class="breakdown-toggle guidance-objective-toggle" data-position-guidance-objective role="group" aria-label="Position guidance objective"><button type="button" data-guidance-objective="attack">Attack</button><button class="active" type="button" data-guidance-objective="balanced">Balanced</button><button type="button" data-guidance-objective="defend">Defend</button></div></div>
+      <div id="position-guidance-result" aria-live="polite">${positionGuidanceResultHtml(analysis, selectedPlayerId, "balanced")}</div>
+    </section>`;
+}
+
+function guidanceMetricCopy(objective) {
+  return {
+    attack: { title: "creating attempts", effect: "attempts created" },
+    defend: { title: "preventing attempts", effect: "attempts prevented" },
+    balanced: { title: "attempt balance", effect: "attempt margin" }
+  }[objective] || { title: "attempt balance", effect: "attempt margin" };
+}
+
+function positionGuidanceResultHtml(analysis, playerId, objective) {
+  if (!playerId) return `<div class="guidance-empty"><strong>No position evidence yet</strong><p>Position guidance appears after a player has tracked field time. Attempts remain optional.</p></div>`;
+  const rows = rankPlayerDeployments(analysis.playerLines, playerId, objective);
+  const playerName = rows[0]?.name || "Player";
+  const metric = guidanceMetricCopy(objective);
+  const attemptEvents = analysis.attemptsFor + analysis.attemptsAgainst;
+  const supportedRows = rows.filter(row => row.minutesMs >= BROAD_ROLE_SAMPLE_MS);
+  const canCompare = rows.length >= 2 && attemptEvents > 0;
+  const top = rows[0];
+  const confidence = supportedRows.length >= 2 && analysis.attemptMatches >= 5 && attemptEvents >= 45
+    ? "Supported"
+    : canCompare ? "Building" : "Needs comparison";
+  const confidenceClass = confidence === "Supported" ? "strong" : confidence === "Building" ? "building" : "weak";
+  const headline = !attemptEvents
+    ? "Attempts have not been recorded yet"
+    : canCompare
+      ? `${top.line} currently ranks highest for ${metric.title}`
+      : `${top?.line || "This role"} is the only tested broad role`;
+  const guidance = !attemptEvents
+    ? "You can still use playing-time reports. Record attempts only when they are useful to your coaching."
+    : rows.length < 2
+      ? `If useful, try ${playerName} in another broad role for 20–30 minutes across two matches to create a comparison.`
+      : supportedRows.length < 2
+        ? `More time across ${playerName}'s tested roles will make this comparison less sensitive to a short stint.`
+        : "More matches and different teammate combinations will test whether this pattern remains stable.";
+  const roleRows = rows.map((row, index) => `<article class="guidance-role-row ${index === 0 && canCompare ? "recommended" : ""}"><span class="guidance-rank">${index + 1}</span><div><strong>${escapeHtml(row.line)}</strong><small>${Math.round(row.minutesMs / 60_000)} min · ${row.attemptsFor} for · ${row.attemptsAgainst} against</small></div><span><b>${row.smoothedAttemptsForPer60.toFixed(1)}</b><small>for / 60</small></span><span><b>${row.smoothedAttemptsAgainstPer60.toFixed(1)}</b><small>against / 60</small></span></article>`).join("");
+  return `<div class="guidance-summary"><div><span class="eyebrow">${escapeHtml(playerName)}</span><h3>${escapeHtml(headline)}</h3><p>Ranks only roles this player has tried, using locally smoothed Attempts For and Attempts Against rates.</p></div><span class="report-strength ${confidenceClass}">${confidence}</span></div>
+    <div class="guidance-role-list">${roleRows || "<p>No role minutes recorded.</p>"}</div>
+    <div class="guidance-next-step"><span aria-hidden="true">◇</span><p><strong>Build the evidence</strong>${escapeHtml(guidance)}</p></div>
+    ${goalkeeperGuidanceHtml(analysis, playerId)}
+    ${exactPositionGuidanceHtml(analysis, playerId, objective)}
+    <div class="guidance-evidence-links"><span>Explore the evidence</span><button type="button" data-open-analysis-report="attemptsFor">Attempts for →</button><button type="button" data-open-analysis-report="attemptsAgainst">Attempts against →</button></div>
+    ${reportModelNote("Local observed-rate smoothing")}`;
+}
+
+function goalkeeperGuidanceHtml(analysis, playerId) {
+  const keeper = analysis.playerPositions.find(row => row.playerId === playerId && row.position === "gk");
+  if (!keeper) return "";
+  const recordedChances = keeper.attemptsAgainst + keeper.goalsAgainst;
+  const noGoalShare = recordedChances ? keeper.attemptsAgainst / recordedChances * 100 : 0;
+  return `<section class="keeper-guidance"><div><span class="eyebrow">Goalkeeper context</span><strong>${Math.round(keeper.minutesMs / 60_000)} minutes in goal</strong></div><div><span><b>${keeper.attemptsAgainst}</b><small>non-goal attempts</small></span><span><b>${keeper.goalsAgainst}</b><small>goals against</small></span><span><b>${recordedChances ? `${Math.round(noGoalShare)}%` : "—"}</b><small>recorded chances without a goal</small></span></div><p>This reflects the goalkeeper and the defense in front of them. It is not save percentage because attempts are not classified as saved, blocked, or off target.</p></section>`;
+}
+
+function exactPositionGuidanceHtml(analysis, playerId, objective) {
+  const readinessKey = objective === "attack" ? "attemptsFor" : objective === "defend" ? "attemptsAgainst" : "attemptsMargin";
+  const readiness = analysis.outcomeReadiness.positions[readinessKey];
+  const allRows = analysis.playerPositions.filter(row => row.playerId === playerId && row.minutesMs > 0);
+  const supportedRows = allRows.filter(row => row.minutesMs >= EXACT_POSITION_SAMPLE_MS);
+  const ready = readiness.ready && supportedRows.length >= 2;
+  const sampleProgress = Math.min(100, Math.round(supportedRows.length / 2 * 100));
+  const progress = Math.min(readiness.progress, sampleProgress);
+  if (!ready) {
+    const sampleNeed = supportedRows.length >= 2 ? "" : `${2 - supportedRows.length} more 60-minute exact-position sample${2 - supportedRows.length === 1 ? "" : "s"} for this player`;
+    const needs = [readiness.ready ? "" : readiness.needs, sampleNeed].filter(Boolean).join(" and ");
+    return `<section class="exact-guidance locked"><div><span class="eyebrow">Deeper guidance</span><h3>Exact-position ranking</h3><p>Later, compare roles such as center midfield, wing, fullback, and striker while accounting for smaller samples.</p></div><span class="report-strength weak">${progress}% ready</span><small>${escapeHtml(needs || "More exact-position variation is needed")}</small></section>`;
+  }
+  const rows = rankPlayerDeployments(supportedRows, playerId, objective, 120 * 60_000);
+  return `<section class="exact-guidance"><div><span class="eyebrow">Deeper guidance</span><h3>Exact-position ranking</h3><p>Higher-evidence comparison of the exact positions this player has tried.</p></div><span class="report-strength strong">Available</span><div class="exact-guidance-list">${rows.map((row, index) => `<article><b>${index + 1}</b><span><strong>${escapeHtml(positionName(row.position))}</strong><small>${Math.round(row.minutesMs / 60_000)} minutes</small></span><em>${formatSigned(row.guidanceEffect, 1)} / 60</em></article>`).join("")}</div></section>`;
 }
 
 function analysisDetailBarHtml() {
@@ -554,8 +810,14 @@ function outcomeReportHtml(analysis, category, metric) {
   const readiness = analysis.outcomeReadiness[category][metric];
   const reportStatus = readiness.ready
     ? `<span class="source-pill live">Your data</span>`
-    : `<span class="source-pill demo">Demo preview</span>`;
-  return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}"><div class="analysis-report-head"><div><h3>${report.title}</h3><p>${report.description}</p></div><div class="report-head-tools">${reportStatus}</div></div><div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, metric)}</div>${reportModelNote(category === "team" ? "Basic averages" : category === "formations" ? "Bayesian-smoothed formation stint averages" : "Bayesian hierarchical Poisson")}</section>`;
+    : category === "impact" && analysis.players.length
+      ? `<span class="source-pill partial">Early data</span>`
+      : `<span class="source-pill demo">Demo preview</span>`;
+  const modelName = category === "team" ? "Basic averages"
+    : category === "formations" ? "Bayesian-smoothed formation stint averages"
+      : category === "impact" ? "Observed player on-field rates"
+        : "Bayesian hierarchical Poisson";
+  return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}"><div class="analysis-report-head"><div><h3>${report.title}</h3><p>${report.description}</p></div><div class="report-head-tools">${reportStatus}</div></div><div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, metric)}</div>${reportModelNote(modelName)}</section>`;
 }
 
 function teamOutcomeHtml(analysis, metric) {
@@ -578,11 +840,43 @@ function categoryOutcomeHtml(analysis, category, metric) {
   const preview = readiness.ready ? "" : `<div class="metric-preview-notice"><strong>Demo preview</strong><span>${escapeHtml(readiness.needs)}</span></div>`;
   if (category === "team") return `${preview}${teamOutcomeHtml(analysis, metric)}`;
   if (category === "formations") return `${preview}${formationOutcomeHtml(analysis, metric)}`;
-  if (category === "impact") return `${preview}${factorReportHtml(metric, "player")}${outcomeStatusHtml(readiness)}`;
+  if (category === "impact") {
+    const hasPlayerData = analysis.players.length > 0;
+    const notice = readiness.ready ? "" : hasPlayerData
+      ? `<div class="metric-preview-notice early"><strong>Early data</strong><span>${escapeHtml(readiness.needs)}</span></div>`
+      : preview;
+    return `${notice}${playerOutcomeHtml(analysis, metric)}${outcomeStatusHtml(readiness)}`;
+  }
   if (category === "lines") return `${preview}${lineOutcomeHtml(analysis, metric)}`;
   if (category === "positions") return `${preview}${positionOutcomeHtml(analysis, metric)}`;
   if (category === "fatigue") return `${preview}${averageTimeOutcomeHtml(analysis, metric)}`;
   return `${preview}${timingBreakdownHtml(analysis, "player", metric)}`;
+}
+
+function playerOutcomeHtml(analysis, metric) {
+  const recordedById = new Map(analysis.players.map(player => [player.playerId, player]));
+  const roster = team?.players?.length ? team.players : DEMO_ANALYSIS.players.map(player => ({ playerId: player.name, name: player.name }));
+  const rows = roster.map(player => {
+    const recorded = recordedById.get(player.playerId) || analysis.players.find(item => item.name === player.name);
+    return recorded ? { ...recorded, noData: false } : { playerId: player.playerId, name: player.name, noData: true, minutesMs: 0, appearances: 0 };
+  });
+  const value = player => metric === "win" ? player.winRate * 100
+    : metric === "margin" ? player.onFieldMarginPer60
+      : metric === "attemptsFor" ? player.attemptsForPer60
+        : metric === "attemptsAgainst" ? player.attemptsAgainstPer60
+          : player.attemptDifferentialPer60;
+  rows.sort((a, b) => {
+    if (a.noData !== b.noData) return a.noData ? 1 : -1;
+    if (a.noData) return a.name.localeCompare(b.name);
+    return metric === "attemptsAgainst" ? value(a) - value(b) : value(b) - value(a);
+  });
+  const valueLabel = player => {
+    if (player.noData) return "—";
+    if (metric === "win") return `${Math.round(value(player))}%`;
+    if (metric === "attemptsFor" || metric === "attemptsAgainst") return `${value(player).toFixed(1)} / 60`;
+    return `${formatSigned(value(player), 1)} / 60`;
+  };
+  return `<div class="all-player-outcome-list"><div class="all-player-outcome-head"><span>Player</span><span>Evidence</span><span>${escapeHtml(metricPresentation(metric).label)}</span></div>${rows.map((player, index) => `<article><span class="player-outcome-rank">${player.noData ? "—" : index + 1}</span><div><strong>${escapeHtml(player.name)}</strong><small>${player.noData ? "No field time recorded" : `${Math.round(player.minutesMs / 60_000)} min · ${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`}</small></div><span>${player.noData ? "Needs field time" : metric === "win" || metric === "margin" ? `${player.completedAppearances || 0} completed matches` : `${player.attemptsFor + player.attemptsAgainst} shared attempts`}</span><b>${valueLabel(player)}</b></article>`).join("")}</div>`;
 }
 
 function openAnalysisMethod(analysis) {
@@ -799,16 +1093,7 @@ function factorEffectLabel(report, value) {
 
 function bindAnalysisControls(analysis) {
   document.querySelectorAll("[data-analysis-team-back]").forEach(button => button.addEventListener("click", returnFromAnalysis));
-  document.querySelectorAll("[data-open-analysis-report]").forEach(button => button.addEventListener("click", () => {
-    const menu = $("#analysis-report-menu");
-    const detail = $("#analysis-report-detail");
-    detail.innerHTML = analysisReportDetailHtml(analysis, button.dataset.openAnalysisReport);
-    menu.classList.add("hidden");
-    detail.classList.remove("hidden");
-    $("#setup-view").classList.add("analysis-detail-open");
-    bindAnalysisControls(analysis);
-    window.scrollTo(0, 0);
-  }));
+  bindAnalysisReportLinks(analysis);
   document.querySelectorAll("[data-analysis-menu-back]").forEach(button => button.addEventListener("click", () => {
     $("#analysis-report-detail").classList.add("hidden");
     $("#analysis-report-menu").classList.remove("hidden");
@@ -820,7 +1105,40 @@ function bindAnalysisControls(analysis) {
     controls.querySelectorAll("[data-playing-time-view]").forEach(item => item.classList.toggle("active", item === button));
     $("#playing-time-list").innerHTML = playingTimeListHtml(analysis.readiness.playingTime.ready && analysis.players.length ? analysis.players : DEMO_ANALYSIS.players, button.dataset.playingTimeView);
   }));
+  const guidancePlayer = document.querySelector("[data-position-guidance-player]");
+  const guidanceControls = document.querySelector("[data-position-guidance-objective]");
+  const renderGuidance = () => {
+    if (!guidancePlayer || !guidanceControls) return;
+    const objective = guidanceControls.querySelector("[data-guidance-objective].active")?.dataset.guidanceObjective || "balanced";
+    const result = $("#position-guidance-result");
+    result.innerHTML = positionGuidanceResultHtml(analysis, guidancePlayer.value, objective);
+    bindAnalysisReportLinks(analysis, result);
+  };
+  guidancePlayer?.addEventListener("change", renderGuidance);
+  guidanceControls?.querySelectorAll("[data-guidance-objective]").forEach(button => button.addEventListener("click", () => {
+    guidanceControls.querySelectorAll("[data-guidance-objective]").forEach(item => item.classList.toggle("active", item === button));
+    renderGuidance();
+  }));
   document.querySelectorAll("[data-analysis-method-link]").forEach(button => button.addEventListener("click", () => openAnalysisMethod(analysis)));
+}
+
+function bindAnalysisReportLinks(analysis, root = document) {
+  root.querySelectorAll("[data-open-analysis-report]").forEach(button => {
+    if (button.dataset.analysisLinkBound) return;
+    button.dataset.analysisLinkBound = "true";
+    button.addEventListener("click", () => openAnalysisReport(analysis, button.dataset.openAnalysisReport));
+  });
+}
+
+function openAnalysisReport(analysis, key) {
+  const menu = $("#analysis-report-menu");
+  const detail = $("#analysis-report-detail");
+  detail.innerHTML = analysisReportDetailHtml(analysis, key);
+  menu.classList.add("hidden");
+  detail.classList.remove("hidden");
+  $("#setup-view").classList.add("analysis-detail-open");
+  bindAnalysisControls(analysis);
+  window.scrollTo(0, 0);
 }
 
 function formatSigned(value, digits = 0) {
@@ -1551,6 +1869,7 @@ function openDialog(title, body, handler, showConfirm = true, closeOnConfirm = t
   const dialog = $("#action-dialog"), form = $("#action-form"), confirm = $("#dialog-confirm");
   $("#dialog-title").textContent = title; $("#dialog-body").onclick = null; $("#dialog-body").innerHTML = body; $("#dialog-error").textContent = "";
   confirm.textContent = "Confirm";
+  confirm.classList.remove("danger-confirm");
   confirm.classList.toggle("hidden", !showConfirm);
   confirm.onclick = async event => {
     event.preventDefault();

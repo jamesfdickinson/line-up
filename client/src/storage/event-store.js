@@ -22,6 +22,18 @@ export class EventStore {
     return event;
   }
 
+  async appendMany(events) {
+    if (!events.length) return;
+    await new Promise((resolve, reject) => {
+      const tx = this.db.transaction("events", "readwrite");
+      const store = tx.objectStore("events");
+      events.forEach(event => store.add(event));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
   async eventsFor(matchId) {
     const rows = await this.#request("events", "readonly", store => store.index("matchId").getAll(matchId));
     return rows.sort((a, b) => a.sequence - b.sequence);
@@ -31,6 +43,25 @@ export class EventStore {
     const rows = await this.#request("events", "readonly", store => store.getAll());
     return rows.sort((a, b) => a.realTimestamp.localeCompare(b.realTimestamp) || a.sequence - b.sequence);
   }
+
+  async allMeta() { return this.#request("meta", "readonly", store => store.getAll()); }
+
+  async replaceAll({ events, meta }) {
+    await new Promise((resolve, reject) => {
+      const tx = this.db.transaction(["events", "meta"], "readwrite");
+      const eventStore = tx.objectStore("events");
+      const metaStore = tx.objectStore("meta");
+      eventStore.clear();
+      metaStore.clear();
+      events.forEach(event => eventStore.add(event));
+      meta.forEach(record => metaStore.put(record));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async clearAll() { return this.replaceAll({ events: [], meta: [] }); }
 
   async deleteMatch(matchId) {
     const keys = await this.#request("events", "readonly", store => store.index("matchId").getAllKeys(matchId));
