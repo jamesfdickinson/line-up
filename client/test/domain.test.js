@@ -301,6 +301,7 @@ test("team analysis unlocks progressively and attributes stint outcomes", () => 
   const matchState = new LineupProjector().project(matchEvents, 900_000);
   const analysis = analyzeTeam([{ events: matchEvents, state: matchState }]);
   assert.equal(analysis.matches, 1);
+  assert.equal(analysis.reportMatchMinutes, 15);
   assert.equal(analysis.wins, 1);
   assert.equal(analysis.attemptsFor, 1);
   assert.equal(analysis.attemptsMargin, 1);
@@ -309,9 +310,11 @@ test("team analysis unlocks progressively and attributes stint outcomes", () => 
   assert.equal(analysis.readiness.fatigue.ready, false);
   assert.equal(analysis.readiness.impact.ready, false);
   assert.equal(analysis.readyCount, 2);
-  assert.equal(analysis.outcomeReadyCount, 5);
+  assert.equal(analysis.outcomeReadyCount, 4);
   assert.equal(analysis.outcomeReportReadyCount, 1);
   assert.equal(analysis.outcomeReportPartialCount, 0);
+  assert.equal(analysis.outcomeReadiness.team.goalsFor.ready, true);
+  assert.equal(analysis.outcomeReadiness.team.goalsAgainst.ready, true);
   assert.equal(analysis.outcomeReadiness.team.attemptsMargin.ready, true);
   assert.equal(analysis.players.find(player => player.playerId === "p2").onFieldMarginPer60, 4);
   const playerPosition = analysis.playerPositions.find(item => item.playerId === "p2");
@@ -320,20 +323,33 @@ test("team analysis unlocks progressively and attributes stint outcomes", () => 
   assert.equal(playerPosition.scoreMargin, 1);
   assert.equal(playerPosition.attemptsForPer60, 4);
   assert.equal(playerPosition.attemptDifferentialPer60, 4);
+  assert.ok(Number.isFinite(playerPosition.smoothedGoalsForPer60));
+  assert.ok(playerPosition.smoothedGoalsForLowPer60 <= playerPosition.smoothedGoalsForPer60);
+  assert.ok(playerPosition.smoothedGoalsForPer60 <= playerPosition.smoothedGoalsForHighPer60);
+  assert.ok(playerPosition.smoothedWinRateLow <= playerPosition.smoothedWinRate);
+  assert.ok(playerPosition.smoothedWinRate <= playerPosition.smoothedWinRateHigh);
   const playerLine = analysis.playerLines.find(item => item.playerId === "p2" && item.line === "Forward");
   assert.equal(playerLine.winRate, 1);
   assert.equal(playerLine.attemptsForPer60, 4);
   assert.equal(playerLine.attemptDifferentialPer60, 4);
+  assert.ok(Number.isFinite(playerLine.smoothedMarginPer60));
   assert.equal(analysis.lineups.length, 1);
   assert.equal(analysis.lineups[0].label, "Alex · Blair");
   assert.equal(analysis.lineups[0].winRate, 1);
   assert.equal(analysis.lineups[0].attemptsForPer60, 4);
-  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].marginPer60, 4);
-  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].attemptsForPer60, 4);
-  assert.equal(analysis.playerTiming.find(player => player.playerId === "p2").buckets[0].attemptDifferentialPer60, 4);
+  const playerTimingBucket = analysis.playerTiming.find(player => player.playerId === "p2").buckets[0];
+  assert.equal(playerTimingBucket.marginPer60, 4);
+  assert.equal(playerTimingBucket.attemptsForPer60, 4);
+  assert.equal(playerTimingBucket.attemptDifferentialPer60, 4);
+  assert.ok(Number.isFinite(playerTimingBucket.smoothedMarginPer60));
   assert.equal(analysis.playerTime[0].exposureMs, 30 * 60_000);
   assert.equal(analysis.playerTime[0].goalsFor, 2);
   assert.equal(analysis.playerTime[0].marginPer60, 4);
+  assert.ok(Number.isFinite(analysis.playerTime[0].smoothedGoalsForPer60));
+  assert.ok(Number.isFinite(analysis.timing[0].smoothedWinRate));
+  const longerEvents = [...base, goal, event(7, "match_completed", 1_800_000)];
+  const longerState = new LineupProjector().project(longerEvents, 1_800_000);
+  assert.equal(analyzeTeam([{ events: matchEvents, state: matchState }, { events: longerEvents, state: longerState }]).reportMatchMinutes, 22.5);
   const threeMatchAnalysis = analyzeTeam(Array.from({ length: 3 }, () => ({ events: matchEvents, state: matchState })));
   assert.equal(threeMatchAnalysis.readiness.fatigue.ready, true);
   assert.equal(threeMatchAnalysis.readiness.playerTime.ready, false);
@@ -354,14 +370,14 @@ test("team analysis unlocks progressively and attributes stint outcomes", () => 
   assert.equal(attemptRichAnalysis.outcomeReadiness.playerTime.attemptsMargin.ready, false);
 });
 
-test("reports only treat stopped matches with a few tracked minutes as finished", () => {
+test("reports automatically count any ten-minute recording as a match", () => {
   const shortEvents = [...base, event(4, "goal_for", 60_000), event(5, "clock_paused", MIN_FINISHED_MATCH_MS - 1)];
   const shortState = new LineupProjector().project(shortEvents, MIN_FINISHED_MATCH_MS - 1);
   const shortAnalysis = analyzeTeam([{ events: shortEvents, state: shortState }]);
-  assert.equal(shortAnalysis.matches, 1);
+  assert.equal(shortAnalysis.matches, 0);
   assert.equal(shortAnalysis.completedMatches, 0);
   assert.equal(shortAnalysis.wins, 0);
-  assert.equal(shortAnalysis.readiness.playingTime.ready, true);
+  assert.equal(shortAnalysis.readiness.playingTime.ready, false);
 
   const finishedEvents = [...base, event(4, "goal_for", 60_000), event(5, "clock_paused", MIN_FINISHED_MATCH_MS)];
   const finishedState = new LineupProjector().project(finishedEvents, MIN_FINISHED_MATCH_MS);
@@ -372,7 +388,8 @@ test("reports only treat stopped matches with a few tracked minutes as finished"
   const resumedEvents = [...finishedEvents, event(6, "clock_resumed", MIN_FINISHED_MATCH_MS)];
   const resumedState = new LineupProjector().project(resumedEvents, MIN_FINISHED_MATCH_MS + 60_000);
   const resumedAnalysis = analyzeTeam([{ events: resumedEvents, state: resumedState }]);
-  assert.equal(resumedAnalysis.completedMatches, 0);
+  assert.equal(resumedAnalysis.completedMatches, 1);
+  assert.equal(resumedAnalysis.wins, 1);
 });
 
 test("playing-time analysis supports per-game averages and season totals", () => {

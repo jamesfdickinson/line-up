@@ -11,8 +11,8 @@ export const REPORT_THRESHOLDS = Object.freeze({
   positions: { completedMatches: 8, goals: 10, supportedFactors: 3, minMinutes: 90, attemptMatches: 5, attemptEvents: 45, attemptMinMinutes: 60 },
   attempts: { matches: 1, events: 1, resultMatches: 5, resultAttemptMatches: 3 }
 });
-export const MIN_FINISHED_MATCH_MS = 3 * 60_000;
-const stoppedLongEnoughForReports = state => Boolean(state.currentPeriod) && !state.periodRunning && state.elapsedMs >= MIN_FINISHED_MATCH_MS;
+export const MIN_FINISHED_MATCH_MS = 10 * 60_000;
+const qualifiesForReports = state => Boolean(state?.config) && state.elapsedMs >= MIN_FINISHED_MATCH_MS;
 
 const percent = (...values) => Math.round(Math.min(1, ...values) * 100);
 const report = (ready, progress, needs) => ({ ready, progress, needs });
@@ -57,8 +57,14 @@ const playerTimeBucketIndex = (intervals, eventTimeMs) => {
 };
 
 export function analyzeTeam(matchRecords) {
-  const recorded = matchRecords.filter(({ state }) => state?.config && (state.elapsedMs > 0 || state.completed));
-  const completed = recorded.filter(({ state }) => stoppedLongEnoughForReports(state));
+  const recorded = matchRecords.filter(({ state }) => qualifiesForReports(state));
+  const completed = recorded;
+  const completedMatchMinutes = completed
+    .map(({ state }) => Number(state.elapsedMs) / 60_000)
+    .filter(minutes => Number.isFinite(minutes) && minutes > 0);
+  const reportMatchMinutes = completedMatchMinutes.length
+    ? completedMatchMinutes.reduce((sum, minutes) => sum + minutes, 0) / completedMatchMinutes.length
+    : 60;
   const playerMap = new Map();
   const positionMap = new Map();
   const lineupMap = new Map();
@@ -82,7 +88,7 @@ export function analyzeTeam(matchRecords) {
   ];
 
   for (const { state, events } of recorded) {
-    const finalMatch = stoppedLongEnoughForReports(state);
+    const finalMatch = true;
     const timeline = activeTimeline(events);
     const attempts = timeline.filter(event => event.type === "goal_attempt");
     const lineupStints = groupLineupStints(state.stints);
@@ -302,6 +308,50 @@ export function analyzeTeam(matchRecords) {
     }
   }
 
+  const goalPriorMs = 120 * 60_000;
+  const winPriorAppearances = 4;
+  const teamGoalsForPerMs = exposureMs ? goalsFor / exposureMs : 0;
+  const teamGoalsAgainstPerMs = exposureMs ? goalsAgainst / exposureMs : 0;
+  const teamWinPriorRate = (wins + 0.5) / (completed.length + 1);
+  const credibleZ = 1.28155;
+  const goalPosterior = (count, exposure, baselinePerMs) => {
+    const shape = count + baselinePerMs * goalPriorMs;
+    const rate = exposure + goalPriorMs;
+    const mean = shape * 3_600_000 / rate;
+    const standardError = Math.sqrt(Math.max(0, shape)) * 3_600_000 / rate;
+    return { mean, low: Math.max(0, mean - credibleZ * standardError), high: mean + credibleZ * standardError, variance: standardError ** 2 };
+  };
+  const winPosterior = (won, appearances) => {
+    const alpha = won + teamWinPriorRate * winPriorAppearances;
+    const beta = Math.max(0, appearances - won) + (1 - teamWinPriorRate) * winPriorAppearances;
+    const total = alpha + beta;
+    const mean = total ? alpha / total : teamWinPriorRate;
+    const standardError = total ? Math.sqrt(alpha * beta / (total ** 2 * (total + 1))) : 0;
+    return { mean, low: Math.max(0, mean - credibleZ * standardError), high: Math.min(1, mean + credibleZ * standardError) };
+  };
+  const bayesianOutcomes = (item, { exposureKey = "minutesMs", goalsForKey = "goalsFor", goalsAgainstKey = "goalsAgainst", appearancesKey = "completedAppearances" } = {}) => {
+    const exposure = item[exposureKey] || 0;
+    const forPosterior = goalPosterior(item[goalsForKey] || 0, exposure, teamGoalsForPerMs);
+    const againstPosterior = goalPosterior(item[goalsAgainstKey] || 0, exposure, teamGoalsAgainstPerMs);
+    const resultPosterior = winPosterior(item.wins || 0, item[appearancesKey] || 0);
+    const marginMean = forPosterior.mean - againstPosterior.mean;
+    const marginStandardError = Math.sqrt(forPosterior.variance + againstPosterior.variance);
+    return {
+      smoothedGoalsForPer60: forPosterior.mean,
+      smoothedGoalsForLowPer60: forPosterior.low,
+      smoothedGoalsForHighPer60: forPosterior.high,
+      smoothedGoalsAgainstPer60: againstPosterior.mean,
+      smoothedGoalsAgainstLowPer60: againstPosterior.low,
+      smoothedGoalsAgainstHighPer60: againstPosterior.high,
+      smoothedMarginPer60: marginMean,
+      smoothedMarginLowPer60: marginMean - credibleZ * marginStandardError,
+      smoothedMarginHighPer60: marginMean + credibleZ * marginStandardError,
+      smoothedWinRate: resultPosterior.mean,
+      smoothedWinRateLow: resultPosterior.low,
+      smoothedWinRateHigh: resultPosterior.high
+    };
+  };
+
   const players = [...playerMap.values()].filter(player => player.minutesMs > 0 || player.presentMatches > 0).map(player => ({
     ...player,
     seasonMinutes: player.minutesMs / 60_000,
@@ -311,13 +361,15 @@ export function analyzeTeam(matchRecords) {
     onFieldMarginPer60: player.minutesMs ? (player.onFieldGoalsFor - player.onFieldGoalsAgainst) * 3_600_000 / player.minutesMs : 0,
     attemptsForPer60: player.minutesMs ? player.attemptsFor * 3_600_000 / player.minutesMs : 0,
     attemptsAgainstPer60: player.minutesMs ? player.attemptsAgainst * 3_600_000 / player.minutesMs : 0,
-    attemptDifferentialPer60: player.minutesMs ? (player.attemptsFor - player.attemptsAgainst) * 3_600_000 / player.minutesMs : 0
+    attemptDifferentialPer60: player.minutesMs ? (player.attemptsFor - player.attemptsAgainst) * 3_600_000 / player.minutesMs : 0,
+    ...bayesianOutcomes(player, { goalsForKey: "onFieldGoalsFor", goalsAgainstKey: "onFieldGoalsAgainst" })
   })).sort((a, b) => b.minutesMs - a.minutesMs);
 
   const positions = [...positionMap.values()].map(item => ({
     ...item,
     marginPer60: item.minutesMs ? (item.goalsFor - item.goalsAgainst) * 3_600_000 / item.minutesMs : 0,
-    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0
+    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0,
+    ...bayesianOutcomes(item)
   })).sort((a, b) => b.minutesMs - a.minutesMs);
   const lineups = [...lineupMap.values()].filter(item => item.minutesMs > 0).map(item => ({
     ...item,
@@ -327,19 +379,13 @@ export function analyzeTeam(matchRecords) {
     marginPer60: item.minutesMs ? (item.goalsFor - item.goalsAgainst) * 3_600_000 / item.minutesMs : 0,
     attemptsForPer60: item.minutesMs ? item.attemptsFor * 3_600_000 / item.minutesMs : 0,
     attemptsAgainstPer60: item.minutesMs ? item.attemptsAgainst * 3_600_000 / item.minutesMs : 0,
-    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0
+    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0,
+    ...bayesianOutcomes(item)
   })).sort((a, b) => b.minutesMs - a.minutesMs);
-  const goalPriorMs = 120 * 60_000;
   const attemptPriorMs = 60 * 60_000;
-  const winPriorAppearances = 4;
-  const teamGoalsForPerMs = exposureMs ? goalsFor / exposureMs : 0;
-  const teamGoalsAgainstPerMs = exposureMs ? goalsAgainst / exposureMs : 0;
   const teamAttemptsForPerMs = exposureMs ? attemptsFor / exposureMs : 0;
   const teamAttemptsAgainstPerMs = exposureMs ? attemptsAgainst / exposureMs : 0;
-  const teamWinRate = completed.length ? wins / completed.length : 0;
   const formations = [...formationMap.values()].filter(item => item.minutesMs > 0).map(item => {
-    const smoothedGoalsForPer60 = (item.goalsFor + teamGoalsForPerMs * goalPriorMs) * 3_600_000 / (item.minutesMs + goalPriorMs);
-    const smoothedGoalsAgainstPer60 = (item.goalsAgainst + teamGoalsAgainstPerMs * goalPriorMs) * 3_600_000 / (item.minutesMs + goalPriorMs);
     const smoothedAttemptsForPer60 = (item.attemptsFor + teamAttemptsForPerMs * attemptPriorMs) * 3_600_000 / (item.minutesMs + attemptPriorMs);
     const smoothedAttemptsAgainstPer60 = (item.attemptsAgainst + teamAttemptsAgainstPerMs * attemptPriorMs) * 3_600_000 / (item.minutesMs + attemptPriorMs);
     return {
@@ -350,10 +396,7 @@ export function analyzeTeam(matchRecords) {
       attemptsForPer60: item.minutesMs ? item.attemptsFor * 3_600_000 / item.minutesMs : 0,
       attemptsAgainstPer60: item.minutesMs ? item.attemptsAgainst * 3_600_000 / item.minutesMs : 0,
       attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0,
-      smoothedWinRate: (item.wins + teamWinRate * winPriorAppearances) / (item.completedAppearances + winPriorAppearances),
-      smoothedGoalsForPer60,
-      smoothedGoalsAgainstPer60,
-      smoothedMarginPer60: smoothedGoalsForPer60 - smoothedGoalsAgainstPer60,
+      ...bayesianOutcomes(item),
       smoothedAttemptsForPer60,
       smoothedAttemptsAgainstPer60,
       smoothedAttemptDifferentialPer60: smoothedAttemptsForPer60 - smoothedAttemptsAgainstPer60
@@ -366,7 +409,8 @@ export function analyzeTeam(matchRecords) {
     marginPer60: item.minutesMs ? (item.goalsFor - item.goalsAgainst) * 3_600_000 / item.minutesMs : 0,
     attemptsForPer60: item.minutesMs ? item.attemptsFor * 3_600_000 / item.minutesMs : 0,
     attemptsAgainstPer60: item.minutesMs ? item.attemptsAgainst * 3_600_000 / item.minutesMs : 0,
-    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0
+    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0,
+    ...bayesianOutcomes(item)
   })).sort((a, b) => b.minutesMs - a.minutesMs);
   const playerLines = [...playerLineMap.values()].map(item => ({
     ...item,
@@ -374,7 +418,8 @@ export function analyzeTeam(matchRecords) {
     scoreMargin: item.completedAppearances ? item.finalMargin / item.completedAppearances : 0,
     attemptsForPer60: item.minutesMs ? item.attemptsFor * 3_600_000 / item.minutesMs : 0,
     attemptsAgainstPer60: item.minutesMs ? item.attemptsAgainst * 3_600_000 / item.minutesMs : 0,
-    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0
+    attemptDifferentialPer60: item.minutesMs ? (item.attemptsFor - item.attemptsAgainst) * 3_600_000 / item.minutesMs : 0,
+    ...bayesianOutcomes(item)
   })).sort((a, b) => b.minutesMs - a.minutesMs);
 
   const goalEvents = goalsFor + goalsAgainst;
@@ -392,7 +437,8 @@ export function analyzeTeam(matchRecords) {
     marginPer60: bucket.exposureMs ? (bucket.goalsFor - bucket.goalsAgainst) * 3_600_000 / bucket.exposureMs : 0,
     attemptsForPer60: bucket.exposureMs ? bucket.attemptsFor * 3_600_000 / bucket.exposureMs : 0,
     attemptsAgainstPer60: bucket.exposureMs ? bucket.attemptsAgainst * 3_600_000 / bucket.exposureMs : 0,
-    attemptDifferentialPer60: bucket.exposureMs ? (bucket.attemptsFor - bucket.attemptsAgainst) * 3_600_000 / bucket.exposureMs : 0
+    attemptDifferentialPer60: bucket.exposureMs ? (bucket.attemptsFor - bucket.attemptsAgainst) * 3_600_000 / bucket.exposureMs : 0,
+    ...bayesianOutcomes(bucket, { exposureKey: "exposureMs", appearancesKey: "completedMatches" })
   }));
   const playerTiming = [...playerTimingMap.values()].map(player => ({
     ...player,
@@ -404,7 +450,8 @@ export function analyzeTeam(matchRecords) {
       marginPer60: bucket.exposureMs ? (bucket.goalsFor - bucket.goalsAgainst) * 3_600_000 / bucket.exposureMs : 0,
       attemptsForPer60: bucket.exposureMs ? bucket.attemptsFor * 3_600_000 / bucket.exposureMs : 0,
       attemptsAgainstPer60: bucket.exposureMs ? bucket.attemptsAgainst * 3_600_000 / bucket.exposureMs : 0,
-      attemptDifferentialPer60: bucket.exposureMs ? (bucket.attemptsFor - bucket.attemptsAgainst) * 3_600_000 / bucket.exposureMs : 0
+      attemptDifferentialPer60: bucket.exposureMs ? (bucket.attemptsFor - bucket.attemptsAgainst) * 3_600_000 / bucket.exposureMs : 0,
+      ...bayesianOutcomes(bucket, { exposureKey: "exposureMs" })
     }))
   })).sort((a, b) => b.totalMs - a.totalMs);
   const playerTime = PLAYER_TIME_BUCKETS.map((bucket, index) => {
@@ -427,7 +474,8 @@ export function analyzeTeam(matchRecords) {
       marginPer60: totals.exposureMs ? (totals.goalsFor - totals.goalsAgainst) * 3_600_000 / totals.exposureMs : 0,
       attemptsForPer60: totals.exposureMs ? totals.attemptsFor * 3_600_000 / totals.exposureMs : 0,
       attemptsAgainstPer60: totals.exposureMs ? totals.attemptsAgainst * 3_600_000 / totals.exposureMs : 0,
-      attemptDifferentialPer60: totals.exposureMs ? (totals.attemptsFor - totals.attemptsAgainst) * 3_600_000 / totals.exposureMs : 0
+      attemptDifferentialPer60: totals.exposureMs ? (totals.attemptsFor - totals.attemptsAgainst) * 3_600_000 / totals.exposureMs : 0,
+      ...bayesianOutcomes(totals, { exposureKey: "exposureMs" })
     };
   });
   const rawAttemptReadiness = report(
@@ -438,17 +486,17 @@ export function analyzeTeam(matchRecords) {
   const teamResultReadiness = report(
     completed.length >= 1,
     percent(completed.length),
-    `${Math.max(0, 1 - completed.length)} more completed matches`
+    `${Math.max(0, 1 - completed.length)} more recorded matches of at least 10 minutes`
   );
   const resultAttemptReadiness = report(
     completed.length >= REPORT_THRESHOLDS.attempts.resultMatches && attemptMatches >= REPORT_THRESHOLDS.attempts.resultAttemptMatches,
     percent(completed.length / REPORT_THRESHOLDS.attempts.resultMatches, attemptMatches / REPORT_THRESHOLDS.attempts.resultAttemptMatches),
-    `${Math.max(0, REPORT_THRESHOLDS.attempts.resultMatches - completed.length)} more completed matches and ${Math.max(0, REPORT_THRESHOLDS.attempts.resultAttemptMatches - attemptMatches)} more matches with attempts`
+    `${Math.max(0, REPORT_THRESHOLDS.attempts.resultMatches - completed.length)} more recorded matches and ${Math.max(0, REPORT_THRESHOLDS.attempts.resultAttemptMatches - attemptMatches)} more matches with attempts`
   );
   const resultImpactReadiness = report(
     completed.length >= REPORT_THRESHOLDS.impact.completedMatches,
     percent(completed.length / REPORT_THRESHOLDS.impact.completedMatches),
-    `${Math.max(0, REPORT_THRESHOLDS.impact.completedMatches - completed.length)} more completed matches`
+    `${Math.max(0, REPORT_THRESHOLDS.impact.completedMatches - completed.length)} more recorded matches`
   );
   const attemptImpactReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.impact.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.impact.attemptEvents,
@@ -458,7 +506,7 @@ export function analyzeTeam(matchRecords) {
   const resultTimingReadiness = report(
     completed.length >= REPORT_THRESHOLDS.fatigue.completedMatches,
     percent(completed.length / REPORT_THRESHOLDS.fatigue.completedMatches),
-    `${Math.max(0, REPORT_THRESHOLDS.fatigue.completedMatches - completed.length)} more completed matches`
+    `${Math.max(0, REPORT_THRESHOLDS.fatigue.completedMatches - completed.length)} more recorded matches`
   );
   const attemptTimingReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.fatigue.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.fatigue.attemptEvents,
@@ -470,7 +518,7 @@ export function analyzeTeam(matchRecords) {
   const resultPlayerTimeReadiness = report(
     completed.length >= REPORT_THRESHOLDS.playerTime.completedMatches && supportedPlayerTimes >= REPORT_THRESHOLDS.playerTime.supportedPlayers,
     percent(completed.length / REPORT_THRESHOLDS.playerTime.completedMatches, supportedPlayerTimes / REPORT_THRESHOLDS.playerTime.supportedPlayers),
-    `${Math.max(0, REPORT_THRESHOLDS.playerTime.completedMatches - completed.length)} more completed matches and ${Math.max(0, REPORT_THRESHOLDS.playerTime.supportedPlayers - supportedPlayerTimes)} more 90-minute player samples`
+    `${Math.max(0, REPORT_THRESHOLDS.playerTime.completedMatches - completed.length)} more recorded matches and ${Math.max(0, REPORT_THRESHOLDS.playerTime.supportedPlayers - supportedPlayerTimes)} more 90-minute player samples`
   );
   const attemptPlayerTimeReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.playerTime.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.playerTime.attemptEvents && attemptSupportedPlayerTimes >= REPORT_THRESHOLDS.playerTime.supportedPlayers,
@@ -480,7 +528,7 @@ export function analyzeTeam(matchRecords) {
   const resultFormationReadiness = report(
     completed.length >= REPORT_THRESHOLDS.formations.completedMatches && goalEvents >= REPORT_THRESHOLDS.formations.goals && supportedFormations >= REPORT_THRESHOLDS.formations.supportedFactors,
     percent(completed.length / REPORT_THRESHOLDS.formations.completedMatches, goalEvents / REPORT_THRESHOLDS.formations.goals, supportedFormations / REPORT_THRESHOLDS.formations.supportedFactors),
-    `${Math.max(0, REPORT_THRESHOLDS.formations.completedMatches - completed.length)} more completed matches, ${Math.max(0, REPORT_THRESHOLDS.formations.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.formations.supportedFactors - supportedFormations)} more ${REPORT_THRESHOLDS.formations.minMinutes}-minute formation samples`
+    `${Math.max(0, REPORT_THRESHOLDS.formations.completedMatches - completed.length)} more recorded matches, ${Math.max(0, REPORT_THRESHOLDS.formations.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.formations.supportedFactors - supportedFormations)} more ${REPORT_THRESHOLDS.formations.minMinutes}-minute formation samples`
   );
   const attemptFormationReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.formations.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.formations.attemptEvents && attemptSupportedFormations >= REPORT_THRESHOLDS.formations.supportedFactors,
@@ -490,7 +538,7 @@ export function analyzeTeam(matchRecords) {
   const resultLineReadiness = report(
     completed.length >= REPORT_THRESHOLDS.lines.completedMatches && goalEvents >= REPORT_THRESHOLDS.lines.goals && supportedPlayerLines >= REPORT_THRESHOLDS.lines.supportedFactors,
     percent(completed.length / REPORT_THRESHOLDS.lines.completedMatches, goalEvents / REPORT_THRESHOLDS.lines.goals, supportedPlayerLines / REPORT_THRESHOLDS.lines.supportedFactors),
-    `${Math.max(0, REPORT_THRESHOLDS.lines.completedMatches - completed.length)} more completed matches, ${Math.max(0, REPORT_THRESHOLDS.lines.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.lines.supportedFactors - supportedPlayerLines)} more 90-minute player-rank samples`
+    `${Math.max(0, REPORT_THRESHOLDS.lines.completedMatches - completed.length)} more recorded matches, ${Math.max(0, REPORT_THRESHOLDS.lines.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.lines.supportedFactors - supportedPlayerLines)} more 90-minute player-rank samples`
   );
   const attemptLineReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.lines.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.lines.attemptEvents && attemptSupportedPlayerLines >= REPORT_THRESHOLDS.lines.supportedFactors,
@@ -500,7 +548,7 @@ export function analyzeTeam(matchRecords) {
   const resultPositionReadiness = report(
     completed.length >= REPORT_THRESHOLDS.positions.completedMatches && goalEvents >= REPORT_THRESHOLDS.positions.goals && supportedPlayerPositions >= REPORT_THRESHOLDS.positions.supportedFactors,
     percent(completed.length / REPORT_THRESHOLDS.positions.completedMatches, goalEvents / REPORT_THRESHOLDS.positions.goals, supportedPlayerPositions / REPORT_THRESHOLDS.positions.supportedFactors),
-    `${Math.max(0, REPORT_THRESHOLDS.positions.completedMatches - completed.length)} more completed matches, ${Math.max(0, REPORT_THRESHOLDS.positions.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.positions.supportedFactors - supportedPlayerPositions)} more 90-minute player-position samples`
+    `${Math.max(0, REPORT_THRESHOLDS.positions.completedMatches - completed.length)} more recorded matches, ${Math.max(0, REPORT_THRESHOLDS.positions.goals - goalEvents)} more goals, and ${Math.max(0, REPORT_THRESHOLDS.positions.supportedFactors - supportedPlayerPositions)} more 90-minute player-position samples`
   );
   const attemptPositionReadiness = report(
     attemptMatches >= REPORT_THRESHOLDS.positions.attemptMatches && attemptEvents >= REPORT_THRESHOLDS.positions.attemptEvents && attemptSupportedPlayerPositions >= REPORT_THRESHOLDS.positions.supportedFactors,
@@ -510,18 +558,18 @@ export function analyzeTeam(matchRecords) {
   const playingTimeResultReadiness = report(
     completed.length >= REPORT_THRESHOLDS.impact.completedMatches,
     percent(completed.length / REPORT_THRESHOLDS.impact.completedMatches),
-    `${Math.max(0, REPORT_THRESHOLDS.impact.completedMatches - completed.length)} more completed matches`
+    `${Math.max(0, REPORT_THRESHOLDS.impact.completedMatches - completed.length)} more recorded matches`
   );
   const outcomeReadiness = {
-    team: { win: teamResultReadiness, margin: teamResultReadiness, attemptsFor: rawAttemptReadiness, attemptsAgainst: rawAttemptReadiness, attemptsMargin: rawAttemptReadiness },
-    playingTime: { win: playingTimeResultReadiness, margin: playingTimeResultReadiness, attemptsFor: rawAttemptReadiness, attemptsAgainst: rawAttemptReadiness, attemptsMargin: rawAttemptReadiness },
+    team: { goalsFor: teamResultReadiness, goalsAgainst: teamResultReadiness, win: teamResultReadiness, margin: teamResultReadiness, attemptsFor: rawAttemptReadiness, attemptsAgainst: rawAttemptReadiness, attemptsMargin: rawAttemptReadiness },
+    playingTime: { goalsFor: playingTimeResultReadiness, goalsAgainst: playingTimeResultReadiness, win: playingTimeResultReadiness, margin: playingTimeResultReadiness, attemptsFor: rawAttemptReadiness, attemptsAgainst: rawAttemptReadiness, attemptsMargin: rawAttemptReadiness },
     attempts: { win: resultAttemptReadiness, margin: resultAttemptReadiness, attemptsFor: rawAttemptReadiness, attemptsAgainst: rawAttemptReadiness, attemptsMargin: rawAttemptReadiness },
-    impact: { win: resultImpactReadiness, margin: resultImpactReadiness, attemptsFor: attemptImpactReadiness, attemptsAgainst: attemptImpactReadiness, attemptsMargin: attemptImpactReadiness },
-    formations: { win: resultFormationReadiness, margin: resultFormationReadiness, attemptsFor: attemptFormationReadiness, attemptsAgainst: attemptFormationReadiness, attemptsMargin: attemptFormationReadiness },
-    fatigue: { win: resultTimingReadiness, margin: resultTimingReadiness, attemptsFor: attemptTimingReadiness, attemptsAgainst: attemptTimingReadiness, attemptsMargin: attemptTimingReadiness },
-    playerTime: { win: resultPlayerTimeReadiness, margin: resultPlayerTimeReadiness, attemptsFor: attemptPlayerTimeReadiness, attemptsAgainst: attemptPlayerTimeReadiness, attemptsMargin: attemptPlayerTimeReadiness },
-    lines: { win: resultLineReadiness, margin: resultLineReadiness, attemptsFor: attemptLineReadiness, attemptsAgainst: attemptLineReadiness, attemptsMargin: attemptLineReadiness },
-    positions: { win: resultPositionReadiness, margin: resultPositionReadiness, attemptsFor: attemptPositionReadiness, attemptsAgainst: attemptPositionReadiness, attemptsMargin: attemptPositionReadiness }
+    impact: { goalsFor: resultImpactReadiness, goalsAgainst: resultImpactReadiness, win: resultImpactReadiness, margin: resultImpactReadiness, attemptsFor: attemptImpactReadiness, attemptsAgainst: attemptImpactReadiness, attemptsMargin: attemptImpactReadiness },
+    formations: { goalsFor: resultFormationReadiness, goalsAgainst: resultFormationReadiness, win: resultFormationReadiness, margin: resultFormationReadiness, attemptsFor: attemptFormationReadiness, attemptsAgainst: attemptFormationReadiness, attemptsMargin: attemptFormationReadiness },
+    fatigue: { goalsFor: resultTimingReadiness, goalsAgainst: resultTimingReadiness, win: resultTimingReadiness, margin: resultTimingReadiness, attemptsFor: attemptTimingReadiness, attemptsAgainst: attemptTimingReadiness, attemptsMargin: attemptTimingReadiness },
+    playerTime: { goalsFor: resultPlayerTimeReadiness, goalsAgainst: resultPlayerTimeReadiness, win: resultPlayerTimeReadiness, margin: resultPlayerTimeReadiness, attemptsFor: attemptPlayerTimeReadiness, attemptsAgainst: attemptPlayerTimeReadiness, attemptsMargin: attemptPlayerTimeReadiness },
+    lines: { goalsFor: resultLineReadiness, goalsAgainst: resultLineReadiness, win: resultLineReadiness, margin: resultLineReadiness, attemptsFor: attemptLineReadiness, attemptsAgainst: attemptLineReadiness, attemptsMargin: attemptLineReadiness },
+    positions: { goalsFor: resultPositionReadiness, goalsAgainst: resultPositionReadiness, win: resultPositionReadiness, margin: resultPositionReadiness, attemptsFor: attemptPositionReadiness, attemptsAgainst: attemptPositionReadiness, attemptsMargin: attemptPositionReadiness }
   };
   const readiness = {
     playingTime: report(recorded.length >= REPORT_THRESHOLDS.playingTime.matches && players.some(player => player.minutesMs > 0), percent(recorded.length / REPORT_THRESHOLDS.playingTime.matches, players.some(player => player.minutesMs > 0) ? 1 : 0), players.some(player => player.minutesMs > 0) ? "Record one match" : "Record on-field player time"),
@@ -534,13 +582,13 @@ export function analyzeTeam(matchRecords) {
     positions: firstReady(resultPositionReadiness, attemptPositionReadiness)
   };
   const outcomeBreakdownKeys = ["team", "formations", "impact", "lines", "fatigue", "playerTime", "positions"];
-  const outcomeMetrics = ["win", "margin", "attemptsFor", "attemptsAgainst", "attemptsMargin"];
-  const outcomeReadyCount = outcomeBreakdownKeys.flatMap(key => Object.values(outcomeReadiness[key])).filter(item => item.ready).length;
+  const outcomeMetrics = ["goalsFor", "goalsAgainst", "margin", "win"];
+  const outcomeReadyCount = outcomeBreakdownKeys.flatMap(key => outcomeMetrics.map(metric => outcomeReadiness[key][metric])).filter(item => item.ready).length;
   const outcomeReportReadyCount = outcomeBreakdownKeys.filter(key => outcomeMetrics.every(metric => outcomeReadiness[key][metric].ready)).length;
   const outcomeReportPartialCount = outcomeBreakdownKeys.filter(key => outcomeMetrics.some(metric => outcomeReadiness[key][metric].ready) && !outcomeMetrics.every(metric => outcomeReadiness[key][metric].ready)).length;
 
   return {
-    matches: recorded.length, completedMatches: completed.length, exposureMs, goalsFor, goalsAgainst,
+    matches: recorded.length, completedMatches: completed.length, exposureMs, reportMatchMinutes, goalsFor, goalsAgainst,
     wins, draws, losses, winRate: completed.length ? wins / completed.length : 0,
     scoreMargin: goalsFor - goalsAgainst, attemptsFor, attemptsAgainst, attemptsMargin: attemptsFor - attemptsAgainst, attemptMatches,
     players, positions, lineups, formations, playerLines, playerPositions, timing: timingRates, playerTime, playerTiming, readiness, outcomeReadiness, outcomeReadyCount, outcomeReportReadyCount, outcomeReportPartialCount,

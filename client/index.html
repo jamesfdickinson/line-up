@@ -54,19 +54,19 @@
         <div id="method-data-summary" class="method-data-summary"></div>
         <section class="method-card">
           <span class="eyebrow">1 · Collected during matches</span><h3>Coach actions and team outcomes</h3>
-          <div class="method-data-grid"><article><strong>Lineup &amp; position</strong><p>Who entered, who left, each named position, and the exact game time of every change.</p></article><article><strong>Outcomes</strong><p>Goals for and against, final result and margin, plus optional attempts for and against.</p></article><article><strong>Context</strong><p>Match format and opponent today; kickoff time and weather can be added later.</p></article></div>
+          <div class="method-data-grid"><article><strong>Lineup &amp; position</strong><p>Who entered, who left, each named position, and the exact game time of every change.</p></article><article><strong>Outcomes</strong><p>Score for, score against, final result, margin, and win rate.</p></article><article><strong>Context</strong><p>Match format and opponent today; kickoff time and weather can be added later.</p></article></div>
           <p class="method-boundary"><strong>Not required:</strong> passes, assists, tackles, blocks, or tactical player actions.</p>
         </section>
         <section class="method-card">
           <span class="eyebrow">2 · Reconstructed locally</span><h3>The event timeline becomes lineup stints</h3>
           <div class="stint-example"><span>00:00</span><i></i><strong>Starting lineup</strong><span>11:24</span><i></i><strong>Substitution</strong><span>18:06</span><i></i><strong>Goal for</strong></div>
-          <p>Every uninterrupted lineup is assigned its duration, players, positions, goals, and attempts. Editing the timeline recalculates these stints automatically.</p>
-          <div class="method-data-grid formation-method-grid"><article><strong>Formation stint averages</strong><p>Formation goals and attempts are totaled across exact stints, then divided by total formation minutes. Longer stints receive proportionally more weight.</p></article><article><strong>Bayesian small-data smoothing</strong><p>With only a few games, formation rates are pulled toward the team's overall rate. The pull is strongest for formations with the fewest minutes and fades as evidence grows.</p></article><article><strong>Interpretation boundary</strong><p>Smoothing reduces unstable early extremes but cannot manufacture evidence or prove that a formation caused the result.</p></article></div>
+          <p>Every uninterrupted lineup is assigned its duration, players, positions, and goals for and against. Editing the timeline recalculates these stints automatically.</p>
+          <div class="method-data-grid formation-method-grid"><article><strong>Formation stint averages</strong><p>Goals for and against are totaled across exact stints, then divided by total formation minutes. Longer stints receive proportionally more weight.</p></article><article><strong>Bayesian small-data smoothing</strong><p>With only a few games, scoring rates are pulled toward the team's overall rate. The pull is strongest for formations with the fewest minutes and fades as evidence grows.</p></article><article><strong>Interpretation boundary</strong><p>Smoothing reduces unstable early extremes but cannot manufacture evidence or prove that a formation caused the result.</p></article></div>
         </section>
         <section class="method-card">
-          <span class="eyebrow">3 · Calculated by the analysis server</span><h3>Bayesian hierarchical Poisson models</h3>
-          <div class="method-model-flow"><article><span>Input</span><strong>Lineup stints + duration</strong></article><b>→</b><article><span>Rate models</span><strong>Goals and attempts, for + against</strong></article><b>→</b><article><span>Outputs</span><strong>Win rate, margin, strongest factors</strong></article></div>
-          <p>Goals for and against are estimated separately. Small samples are partially pooled toward the team average, reducing extreme early rankings. Win rate and margin are then derived from those rates. Attempts use parallel models only when the coach records them consistently.</p>
+          <span class="eyebrow">3 · Calculated from your data</span><h3>Hierarchical Bayesian scoring models</h3>
+          <div class="method-model-flow"><article><span>Input</span><strong>Lineup stints + duration</strong></article><b>→</b><article><span>Rate models</span><strong>Score for + score against</strong></article><b>→</b><article><span>Outputs</span><strong>Win rate, margin, strongest factors</strong></article></div>
+          <p>Team-centered Gamma–Poisson models estimate score for and score against with tracked time as exposure. A Beta–Binomial model estimates win rate. This lightweight empirical-Bayes approach partially pools small samples toward the team average, and margin is derived from the two scoring rates. Every recording of at least 10 minutes is treated as a match automatically; no close-out action is required. Reports use their average recorded duration for per-match values. Player attempts may still be logged in the match timeline, but they do not drive reports.</p>
         </section>
         <section class="method-card">
           <span class="eyebrow">4 · Interpreted cautiously</span><h3>Association, uncertainty, and readiness</h3>
@@ -86,15 +86,9 @@
       <section id="field-scoreboard" class="scoreboard">
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
-          <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong></div>
+          <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add goal for team" title="Add goal for team">+</button></div>
           <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><div class="clock-actions"><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
-          <div class="team-score away"><strong id="score-against">0</strong><span id="opponent-name">OPPONENT</span></div>
-        </div>
-        <div class="quick-log" aria-label="Log match events">
-          <button id="score-for-button" class="quick-log-button goal-for" type="button"><span aria-hidden="true">⚽</span><strong>Goal</strong><small id="quick-team-name">Us</small></button>
-          <button id="goal-attempt-button" class="quick-log-button attempt-for" type="button"><span aria-hidden="true">↗</span><strong>Attempt</strong><small>Us</small></button>
-          <button id="score-against-button" class="quick-log-button goal-against" type="button"><span aria-hidden="true">⚽</span><strong>Goal</strong><small id="quick-opponent-name">Them</small></button>
-          <button id="opponent-goal-attempt-button" class="quick-log-button attempt-against" type="button"><span aria-hidden="true">↙</span><strong>Attempt</strong><small>Them</small></button>
+          <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add goal for opponent" title="Add goal for opponent">+</button><span id="opponent-name">OPPONENT</span></div>
         </div>
       </section>
 
@@ -119,9 +113,8 @@
       <section id="report-panel" class="tab-panel hidden">
         <div class="panel-head"><div><div class="eyebrow">Match</div><h2>Match analysis</h2></div><div class="report-actions"><button id="export-json" class="secondary">Export</button></div></div>
         <div id="match-report-summary" class="match-report-summary"></div>
-        <h2>Goals &amp; attempts timeline</h2><div id="match-event-flow" class="match-event-flow"></div>
+        <h2>Goals timeline</h2><div id="match-event-flow" class="match-event-flow"></div>
         <h2>Players on for goals</h2><p class="hint report-intro">Each player appears once per side, grouped by the exact number of goals recorded while they were on the field.</p><div id="goal-player-groups" class="goal-player-groups"></div>
-        <h2>Attempts summary</h2><div id="attempts-report" class="attempts-report"></div>
         <h2>Playing time</h2>
         <div id="minutes-report" class="minutes-report"></div>
         <h2>Lineup stints</h2><div id="stints-report" class="stints-report"></div>

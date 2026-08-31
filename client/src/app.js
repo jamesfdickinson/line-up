@@ -42,10 +42,9 @@ const SILENT_EVENT_TYPES = new Set([
   "layout_changed",
   "period_started", "period_ended", "clock_paused", "clock_resumed"
 ]);
-const ANALYSIS_CATEGORY_KEYS = ["team", "impact", "formations", "lines", "positions", "fatigue", "playerTime"];
-const ANALYSIS_OUTCOME_METRICS = ["attemptsFor", "attemptsAgainst", "attemptsMargin", "win", "margin"];
-const ANALYSIS_REPORT_COUNT = ANALYSIS_OUTCOME_METRICS.length + 2;
-const ANALYSIS_OUTCOME_COUNT = ANALYSIS_CATEGORY_KEYS.length * ANALYSIS_OUTCOME_METRICS.length + 2;
+const ANALYSIS_CATEGORY_KEYS = ["impact", "formations", "lines", "positions", "fatigue", "playerTime"];
+const ANALYSIS_OUTCOME_METRICS = ["goalsFor", "goalsAgainst", "margin", "win"];
+const ANALYSIS_REPORT_COUNT = ANALYSIS_CATEGORY_KEYS.length + 1;
 const DEMO_ANALYSIS = Object.freeze({
   matches: 8, completedMatches: 8, wins: 5, draws: 1, losses: 2, winRate: .625,
   scoreMargin: 6, goalsFor: 18, goalsAgainst: 12, attemptsFor: 91, attemptsAgainst: 67,
@@ -212,9 +211,7 @@ function bindStaticEvents() {
   $("#half-toggle").addEventListener("click", toggleHalf);
   $("#match-control").addEventListener("click", toggleClock);
   $("#score-for-button").onclick = event => { event.preventDefault(); event.stopPropagation(); openGoalFor(); };
-  $("#goal-attempt-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_attempt", { team: "for" }).catch(showActionError); };
   $("#score-against-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_against").catch(showActionError); };
-  $("#opponent-goal-attempt-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_attempt", { team: "against" }).catch(showActionError); };
   $("#clear-field").addEventListener("click", clearField);
   $("#layout-button").addEventListener("click", openLayoutPicker);
   $("#more-actions").addEventListener("click", openMoreActions);
@@ -530,8 +527,8 @@ async function renderTeamDashboard() {
   const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id))).sort((a, b) => b.state.config.date.localeCompare(a.state.config.date));
   const matches = records.map(record => record.state);
   const analysis = analyzeTeam(records);
-  const readyReportCount = outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready) + Number(positionGuidanceReadiness(analysis).ready);
-  const readyPartCount = analysis.outcomeReadyCount + Number(analysis.readiness.playingTime.ready);
+  const readyReportCount = categoryReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready);
+  const readyPartCount = categoryReportStartedCount(analysis) + Number(analysis.readiness.playingTime.ready);
   const seenReadyCount = Number((await store.getMeta(`analysisReportSeen:${team.teamId}`))?.value || 0);
   const newReports = Math.max(0, readyReportCount - seenReadyCount);
   $("#analysis-new-badge").classList.toggle("hidden", newReports === 0);
@@ -541,7 +538,7 @@ async function renderTeamDashboard() {
     : readyReportCount
       ? `${readyReportCount} of ${ANALYSIS_REPORT_COUNT} reports fully unlocked`
       : readyPartCount
-        ? `${readyPartCount} of ${ANALYSIS_OUTCOME_COUNT} report parts ready`
+        ? `${readyPartCount} of ${ANALYSIS_REPORT_COUNT} report groups have data`
         : "Demo reports ready to preview";
   const pausedAtByMatch = new Map(ids.map(id => {
     const matchEvents = activeTimeline(all.filter(event => event.matchId === id));
@@ -605,7 +602,7 @@ async function showSeasonAnalysis() {
   const analysis = analyzeTeam(records);
   $("#season-summary").innerHTML = teamAnalysisHtml(analysis);
   bindAnalysisControls(analysis);
-  await store.setMeta(`analysisReportSeen:${team.teamId}`, outcomeMetricReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready) + Number(positionGuidanceReadiness(analysis).ready));
+  await store.setMeta(`analysisReportSeen:${team.teamId}`, categoryReportReadyCount(analysis) + Number(analysis.readiness.playingTime.ready));
   $("#analysis-new-badge").classList.add("hidden");
   $("#team-dashboard").classList.add("hidden"); $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden");
 }
@@ -618,18 +615,13 @@ function analysisRecord(matchEvents) {
 }
 
 function teamAnalysisHtml(analysis) {
-  const groups = [
-    ["Playing time", "Track minutes and appearances without recording any goals or attempts.", ["playingTime"]],
-    ["Attack & defense", "Explore each pressure measure separately. These reports unlock from recorded attempts.", ["attemptsFor", "attemptsAgainst", "attemptsMargin"]],
-    ["Match results", "Explore results separately from attempt tracking. These reports unlock from finished matches and goals.", ["win", "margin"]],
-    ["Guidance", "Explore position ideas supported by recorded match data.", ["positionGuidance"]]
-  ];
+  const reports = ["playingTime", "impact", "formations", "lines", "positions", "fatigue", "playerTime"];
   return `
     ${analysisOverviewBarHtml()}
     <div id="analysis-report-menu" class="analysis-report-menu">
-      <section class="analysis-data-note"><div><span class="eyebrow">Your data</span><strong>${analysis.completedMatches} completed match${analysis.completedMatches === 1 ? "" : "es"} · ${analysis.goalsFor + analysis.goalsAgainst} goals · ${analysis.attemptsFor + analysis.attemptsAgainst} attempts</strong></div><button class="info-button" data-analysis-method-link type="button" aria-label="How reports work">i</button></section>
-      ${groups.map(([title, blurb, keys]) => `<section class="analysis-menu-group"><div class="analysis-menu-heading"><h3>${title}</h3><p>${blurb}</p></div><div class="analysis-menu-list">${keys.map(key => analysisMenuCardHtml(analysis, key)).join("")}</div></section>`).join("")}
-      <p class="analysis-method-note"><strong>Optional data stays optional.</strong> Tracking field time powers playing-time reports. Goals and attempts add lineup analysis when you choose to record them.</p>
+      <section class="analysis-data-note"><div><span class="eyebrow">Your data</span><strong>${analysis.completedMatches} recorded match${analysis.completedMatches === 1 ? "" : "es"} · ${analysis.goalsFor} score for · ${analysis.goalsAgainst} score against</strong></div><button class="info-button" data-analysis-method-link type="button" aria-label="How reports work">i</button></section>
+      <div class="analysis-menu-list flat-report-list">${reports.map(key => analysisMenuCardHtml(analysis, key)).join("")}</div>
+      <p class="analysis-method-note"><strong>Simple, consistent outcomes.</strong> Every outcome report uses score for, score against, margin, or win rate. Player attempts remain available as optional timeline logs.</p>
     </div>
     <div id="analysis-report-detail" class="hidden"></div>`;
 }
@@ -640,18 +632,17 @@ function analysisOverviewBarHtml() {
 
 const ANALYSIS_REPORTS = Object.freeze({
   playingTime: { title: "Playing time", description: "Average time when present and total time on the field for every player." },
-  attemptsFor: { title: "Attempts for", description: "What helps the team create more attempts." },
-  attemptsAgainst: { title: "Attempts against", description: "What helps the team allow fewer opponent attempts." },
-  attemptsMargin: { title: "Attempts margin", description: "What improves the balance between attempts created and allowed." },
+  goalsFor: { title: "Score for", description: "What is associated with the team scoring more goals." },
+  goalsAgainst: { title: "Score against", description: "What is associated with the team conceding fewer goals." },
   win: { title: "Win rate", description: "What is associated with a stronger chance of winning." },
   margin: { title: "Score margin", description: "What is associated with scoring more goals than the opponent." },
   positionGuidance: { title: "Position guidance", description: "Rank a player's tested roles using their attacking and defensive attempt patterns." }
 });
 
 const ANALYSIS_CATEGORY_REPORTS = Object.freeze({
-  team: { title: "Team baseline", description: "Your overall results, goals, and attempt rates." },
+  team: { title: "Team baseline", description: "Your overall scoring and match results." },
   impact: { title: "Players & outcomes", description: "Which players share the field with stronger outcomes." },
-  formations: { title: "Formations & outcomes", description: "Compare results and pressure for each formation." },
+  formations: { title: "Formations & outcomes", description: "Compare scoring and results for each formation." },
   lines: { title: "Players by position group", description: "Compare a player as keeper, defender, midfielder, or forward." },
   positions: { title: "Players by exact position", description: "Compare a player in each named field position." },
   fatigue: { title: "Team outcomes by time played", description: "The team pattern during the first, next, and later 15 minutes played." },
@@ -664,18 +655,22 @@ function analysisReportReadiness(analysis, key) {
     const readiness = positionGuidanceReadiness(analysis);
     return { ...readiness, readyCount: readiness.comparablePlayers, total: Math.max(1, readiness.comparablePlayers) };
   }
-  const parts = ANALYSIS_CATEGORY_KEYS.map(category => analysis.outcomeReadiness[category][key]);
+  const parts = ANALYSIS_OUTCOME_METRICS.map(metric => analysis.outcomeReadiness[key][metric]);
   const readyCount = parts.filter(item => item.ready).length;
-  const best = parts.filter(item => !item.ready).sort((a, b) => b.progress - a.progress)[0];
-  return { ready: readyCount === parts.length, progress: best?.progress || 0, needs: best?.needs || "Record match data", readyCount, total: parts.length };
+  const limiting = parts.filter(item => !item.ready).sort((a, b) => a.progress - b.progress)[0];
+  return { ready: readyCount === parts.length, progress: limiting?.progress ?? 100, needs: limiting?.needs || "Record match data", readyCount, total: parts.length };
 }
 
-function outcomeMetricReportReadyCount(analysis) {
-  return ANALYSIS_OUTCOME_METRICS.filter(metric => ANALYSIS_CATEGORY_KEYS.every(category => analysis.outcomeReadiness[category][metric].ready)).length;
+function categoryReportReadyCount(analysis) {
+  return ANALYSIS_CATEGORY_KEYS.filter(category => analysisReportReadiness(analysis, category).ready).length;
+}
+
+function categoryReportStartedCount(analysis) {
+  return ANALYSIS_CATEGORY_KEYS.filter(category => analysisReportReadiness(analysis, category).progress > 0).length;
 }
 
 function analysisMenuCardHtml(analysis, key) {
-  const report = ANALYSIS_REPORTS[key];
+  const report = key === "playingTime" ? ANALYSIS_REPORTS.playingTime : ANALYSIS_CATEGORY_REPORTS[key];
   const readiness = analysisReportReadiness(analysis, key);
   const stateLabel = readiness.ready ? (key === "positionGuidance" ? "Available" : "Strong") : readiness.progress ? "Building" : "Needs data";
   const requirement = readiness.ready
@@ -683,20 +678,41 @@ function analysisMenuCardHtml(analysis, key) {
       ? `${analysis.matches} tracked match${analysis.matches === 1 ? "" : "es"}`
       : key === "positionGuidance"
         ? `${readiness.comparablePlayers} player${readiness.comparablePlayers === 1 ? " has" : "s have"} comparable broad roles`
-        : `All ${readiness.total} sections ready`)
-    : key === "playingTime" || key === "positionGuidance" ? readiness.needs : `${readiness.readyCount} of ${readiness.total} sections ready · ${readiness.needs}`;
+        : `Score for, against, margin, and win rate ready`)
+    : key === "playingTime" || key === "positionGuidance" ? readiness.needs : `${readiness.progress}% toward the full report · ${readiness.needs}`;
   return `<button class="analysis-menu-card" type="button" data-open-analysis-report="${key}"><span class="analysis-menu-icon" aria-hidden="true">${readiness.ready ? "✓" : readiness.progress ? "◐" : "○"}</span><span><strong>${report.title}</strong><small>${report.description}</small><em>${escapeHtml(requirement)}</em></span><span class="report-strength ${readiness.ready ? "strong" : readiness.progress ? "building" : "weak"}">${stateLabel}</span><span class="analysis-entry-arrow" aria-hidden="true">→</span></button>`;
 }
 
 function analysisReportDetailHtml(analysis, key) {
-  const report = ANALYSIS_REPORTS[key];
   if (key === "playingTime") {
+    const report = ANALYSIS_REPORTS.playingTime;
     const ready = analysis.readiness.playingTime.ready && analysis.players.length;
     const source = ready ? analysis.players : DEMO_ANALYSIS.players;
     return `${analysisDetailBarHtml()}<section class="analysis-report-card playing-time-report"><div class="analysis-report-head"><div><span class="eyebrow">Playing time</span><h3>${report.title}</h3><p>${report.description}</p></div>${sourcePill(ready)}</div><div class="breakdown-toggle playing-time-toggle" data-playing-time-report role="group" aria-label="Playing time period"><button class="active" type="button" data-playing-time-view="game">Per match present</button><button type="button" data-playing-time-view="season">Season total</button></div><div id="playing-time-list" class="playing-time-list" aria-live="polite">${playingTimeListHtml(source, "game")}</div>${reportModelNote("Timeline duration aggregation")}${unlockFooter(analysis.readiness.playingTime, ready ? "Matches marked Not here are excluded from that player's average." : "Preview uses sample players and values.")}</section>`;
   }
   if (key === "positionGuidance") return positionGuidanceReportHtml(analysis);
-  return `${analysisDetailBarHtml()}<header class="metric-report-heading"><span class="eyebrow">Outcome report</span><h2>${report.title}</h2><p>${report.description} Each section unlocks independently as enough matching data is recorded.</p></header>${outcomeReportsHtml(analysis, key)}`;
+  return categoryReportDetailHtml(analysis, key);
+}
+
+function categoryReportDetailHtml(analysis, category, metric = "margin") {
+  const report = ANALYSIS_CATEGORY_REPORTS[category];
+  const readiness = analysisReportReadiness(analysis, category);
+  const metricButtons = ANALYSIS_OUTCOME_METRICS.map(key => `<button class="${key === metric ? "active" : ""}" type="button" data-category-metric="${key}">${metricPresentation(key).label}</button>`).join("");
+  return `${analysisDetailBarHtml()}<header class="metric-report-heading"><span class="eyebrow">Grouped report</span><h2>${report.title}</h2><p>${report.description} All four outcomes use the same recorded lineup exposure and unlock together.</p></header>
+    ${teamBaselineHtml(analysis)}
+    <div class="category-report-status"><span class="report-strength ${readiness.ready ? "strong" : readiness.progress ? "building" : "weak"}">${readiness.ready ? "Ready" : `${readiness.progress}% ready`}</span><small>${escapeHtml(readiness.ready ? "For · Against · Margin · Win rate available" : readiness.needs)}</small></div>
+    <div class="metric-toggle category-metric-toggle" data-category-metric-toggle="${category}" role="group" aria-label="Outcome shown">${metricButtons}</div>
+    <div id="category-report-body" aria-live="polite">${outcomeReportHtml(analysis, category, metric)}</div>`;
+}
+
+function teamBaselineHtml(analysis) {
+  const hasCompletedMatches = analysis.completedMatches > 0;
+  const perMatch = value => hasCompletedMatches ? value / analysis.completedMatches : null;
+  const goalsFor = perMatch(analysis.goalsFor);
+  const goalsAgainst = perMatch(analysis.goalsAgainst);
+  const margin = goalsFor === null ? null : goalsFor - goalsAgainst;
+  const value = number => number === null ? "-" : number.toFixed(1);
+  return `<section class="team-baseline-strip" aria-label="Team baseline"><div><span>Team reference</span><small>${hasCompletedMatches ? `Averages from ${analysis.completedMatches} recorded match${analysis.completedMatches === 1 ? "" : "es"}` : "No 10-minute matches yet"}</small></div><article><strong>${value(goalsFor)}</strong><span>For</span></article><article><strong>${value(goalsAgainst)}</strong><span>Against</span></article><article><strong class="${margin !== null && margin < 0 ? "negative-text" : "positive-text"}">${margin === null ? "-" : formatSigned(margin, 1)}</strong><span>Margin</span></article><article><strong>${analysis.completedMatches ? `${Math.round(analysis.winRate * 100)}%` : "-"}</strong><span>Win rate</span></article></section>`;
 }
 
 function positionGuidanceReportHtml(analysis) {
@@ -817,11 +833,11 @@ function playingTimeListHtml(players, view) {
 
 function outcomeReportsHtml(analysis, metric) {
   const reports = [
-    ["team", "By Team", "The team baseline across completed matches and tracked attempts."],
+    ["team", "By Team", "The team baseline across recorded matches of at least 10 minutes."],
     ["impact", "By Player", "Which players have the strongest positive or negative effect while on the field."],
     ["lines", "By Player Position Rank", "How each player affects outcomes as a keeper, defender, midfielder, or forward."],
     ["fatigue", "Time on Field vs Outcomes", "The average outcome across all players during their first, second, and later 15 minutes on the field."],
-    ["formations", "By Formation", "How each formation relates to results, goal margin, and attacking or defensive pressure."],
+    ["formations", "By Formation", "How each formation relates to scoring and results."],
     ["playerTime", "Time on Field by Player", "How time on field relates to outcomes for each individual player. This report needs more data before drawing player-level conclusions."],
     ["positions", "By Player Position Name", "How each player affects outcomes in a specific named field position."]
   ];
@@ -830,7 +846,7 @@ function outcomeReportsHtml(analysis, metric) {
 }
 
 function outcomeReportHtml(analysis, category, metric) {
-  const report = ANALYSIS_CATEGORY_REPORTS[category];
+  const report = ANALYSIS_REPORTS[metric];
   const readiness = analysis.outcomeReadiness[category][metric];
   const reportStatus = readiness.ready
     ? `<span class="source-pill live">Your data</span>`
@@ -838,25 +854,47 @@ function outcomeReportHtml(analysis, category, metric) {
       ? `<span class="source-pill partial">Early data</span>`
       : `<span class="source-pill demo">Demo preview</span>`;
   const modelName = category === "team" ? "Basic averages"
-    : category === "formations" ? "Bayesian-smoothed formation stint averages"
-      : category === "impact" ? "Observed player on-field rates"
-        : "Bayesian hierarchical Poisson";
-  return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}"><div class="analysis-report-head"><div><h3>${report.title}</h3><p>${report.description}</p></div><div class="report-head-tools">${reportStatus}</div></div><div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, metric)}</div>${reportModelNote(modelName)}</section>`;
+    : "Hierarchical empirical Bayes: Gamma-Poisson + Beta-Binomial partial pooling";
+  const displayBasis = metric === "win" ? "" : ` Values are shown per match using the average duration of recorded games lasting at least 10 minutes.`;
+  return `<section class="analysis-report-card outcome-report-card ${category === "team" ? "analysis-feature-report" : ""}" data-category-report-card="${category}"><div class="analysis-report-head"><div><span class="eyebrow">Current outcome</span><h3>${report.title}</h3><p>${report.description}${displayBasis}</p></div><div class="report-head-tools">${reportStatus}</div></div><div id="category-explorer-${category}">${categoryOutcomeHtml(analysis, category, metric)}</div>${reportModelNote(modelName)}</section>`;
 }
 
 function teamOutcomeHtml(analysis, metric) {
   const readiness = analysis.outcomeReadiness.team[metric];
   const source = readiness.ready ? analysis : DEMO_ANALYSIS;
-  const attemptMetric = metric === "attemptsFor" || metric === "attemptsAgainst" || metric === "attemptsMargin";
-  const matches = Math.max(1, metric === "win" || metric === "margin" ? source.completedMatches : source.attemptMatches || source.matches);
+  const matches = Math.max(1, source.completedMatches);
   const value = metric === "win" ? source.winRate * 100
     : metric === "margin" ? source.scoreMargin / matches
-      : metric === "attemptsMargin" ? (source.attemptsFor - source.attemptsAgainst) / matches
-        : source[metric] / matches;
-  const label = metric === "attemptsMargin" ? `${formatSigned(value, 1)} / match`
-    : attemptMetric ? `${Number(value).toFixed(1)} / match`
-      : metricValueLabel(value, metric);
-  return `<div class="outcome-summary"><article><span>Team ${metricPresentation(metric).label}</span><strong>${label}</strong><small>${matches} ${metric === "win" || metric === "margin" ? "completed" : "tracked"} match${matches === 1 ? "" : "es"}</small></article><article><span>Record</span><strong>${source.completedMatches ? `${source.wins}-${source.draws}-${source.losses}` : "—"}</strong><small>Win · draw · loss</small></article><article><span>Events</span><strong>${attemptMetric ? source.attemptsFor + source.attemptsAgainst : source.goalsFor + source.goalsAgainst}</strong><small>${attemptMetric ? `${source.attemptsFor} for · ${source.attemptsAgainst} against` : "goals recorded"}</small></article></div>${outcomeStatusHtml(readiness)}`;
+      : source[metric] / matches;
+  const label = metric === "goalsFor" || metric === "goalsAgainst"
+    ? Number(value).toFixed(1)
+    : metricValueLabel(value, metric);
+  return `<div class="outcome-summary"><article><span>Team ${metricPresentation(metric).label}</span><strong>${label}</strong><small>${matches} recorded match${matches === 1 ? "" : "es"}</small></article><article><span>Record</span><strong>${source.completedMatches ? `${source.wins}-${source.draws}-${source.losses}` : "—"}</strong><small>Win · draw · loss</small></article><article><span>Score</span><strong>${source.goalsFor}–${source.goalsAgainst}</strong><small>${source.goalsFor} for · ${source.goalsAgainst} against</small></article></div>${outcomeStatusHtml(readiness)}`;
+}
+
+function scoreRatePer60(item, side) {
+  const smoothedKey = side === "for" ? "smoothedGoalsForPer60" : "smoothedGoalsAgainstPer60";
+  if (Number.isFinite(item?.[smoothedKey])) return item[smoothedKey];
+  const rateKey = side === "for" ? "goalsForPer60" : "goalsAgainstPer60";
+  if (Number.isFinite(item?.[rateKey])) return item[rateKey];
+  const countKey = side === "for" ? "goalsFor" : "goalsAgainst";
+  const playerCountKey = side === "for" ? "onFieldGoalsFor" : "onFieldGoalsAgainst";
+  const count = Number.isFinite(item?.[countKey]) ? item[countKey] : item?.[playerCountKey];
+  if (Number.isFinite(count) && item?.minutesMs) return count * 3_600_000 / item.minutesMs;
+  const margin = item?.marginPer60 ?? item?.onFieldMarginPer60 ?? item?.scoreMargin ?? 0;
+  return Math.max(0, 1.5 + (side === "for" ? margin : -margin) / 2);
+}
+
+function reportMatchScale(analysis) {
+  return (analysis.reportMatchMinutes || 60) / 60;
+}
+
+function scoreRatePerMatch(analysis, item, side) {
+  return scoreRatePer60(item, side) * reportMatchScale(analysis);
+}
+
+function marginRatePerMatch(analysis, item) {
+  return (item?.smoothedMarginPer60 ?? item?.marginPer60 ?? item?.onFieldMarginPer60 ?? item?.scoreMargin ?? 0) * reportMatchScale(analysis);
 }
 
 function categoryOutcomeHtml(analysis, category, metric) {
@@ -884,32 +922,30 @@ function playerOutcomeHtml(analysis, metric) {
     const recorded = recordedById.get(player.playerId) || analysis.players.find(item => item.name === player.name);
     return recorded?.minutesMs > 0 ? { ...recorded, noData: false } : { ...recorded, playerId: player.playerId, name: player.name, noData: true, minutesMs: 0, appearances: 0 };
   });
-  const value = player => metric === "win" ? player.winRate * 100
-    : metric === "margin" ? player.onFieldMarginPer60
-      : metric === "attemptsFor" ? player.attemptsForPer60
-        : metric === "attemptsAgainst" ? player.attemptsAgainstPer60
-          : player.attemptDifferentialPer60;
+  const value = player => metric === "win" ? (player.smoothedWinRate ?? player.winRate) * 100
+    : metric === "margin" ? marginRatePerMatch(analysis, player)
+      : scoreRatePerMatch(analysis, player, metric === "goalsFor" ? "for" : "against");
   rows.sort((a, b) => {
     if (a.noData !== b.noData) return a.noData ? 1 : -1;
     if (a.noData) return a.name.localeCompare(b.name);
-    return metric === "attemptsAgainst" ? value(a) - value(b) : value(b) - value(a);
+    return metric === "goalsAgainst" ? value(a) - value(b) : value(b) - value(a);
   });
   const valueLabel = player => {
     if (player.noData) return "—";
     if (metric === "win") return `${Math.round(value(player))}%`;
-    if (metric === "attemptsFor" || metric === "attemptsAgainst") return `${value(player).toFixed(1)} / 60`;
-    return `${formatSigned(value(player), 1)} / 60`;
+    if (metric === "goalsFor" || metric === "goalsAgainst") return value(player).toFixed(1);
+    return formatSigned(value(player), 1);
   };
   const values = rows.filter(player => !player.noData).map(value);
   const low = values.length ? Math.min(...values) : 0;
   const high = values.length ? Math.max(...values) : 0;
   const position = player => high === low ? 50 : (value(player) - low) / (high - low) * 100;
   const rangeLabel = number => metric === "win" ? `${Math.round(number)}%` : Number(number).toFixed(1);
-  return `<div class="all-player-outcome-list"><div class="all-player-outcome-head"><span>Player</span><span>Evidence</span><span>${escapeHtml(metricPresentation(metric).label)}<small>${rangeLabel(low)} to ${rangeLabel(high)}</small></span></div>${rows.map((player, index) => `<article><span class="player-outcome-rank">${player.noData ? "—" : index + 1}</span><div><strong>${escapeHtml(player.name)}</strong><small>${player.noData ? "No field time recorded" : `${Math.round(player.minutesMs / 60_000)} min · ${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`}</small></div><span>${player.noData ? "Needs field time" : metric === "win" || metric === "margin" ? `${player.completedAppearances || 0} completed matches` : `${player.attemptsFor + player.attemptsAgainst} shared attempts`}</span><span class="player-outcome-value">${player.noData ? `<b>—</b>` : `<span class="player-team-range" title="Team range ${rangeLabel(low)} to ${rangeLabel(high)}; ${player.name} ${valueLabel(player)}"><i style="left:${position(player)}%"></i></span><b>${valueLabel(player)}</b>`}</span></article>`).join("")}</div>`;
+  return `<div class="all-player-outcome-list"><div class="all-player-outcome-head"><span>Player</span><span>Evidence</span><span>${escapeHtml(metricPresentation(metric).label)}<small>${rangeLabel(low)} to ${rangeLabel(high)}</small></span></div>${rows.map((player, index) => `<article><span class="player-outcome-rank">${player.noData ? "—" : index + 1}</span><div><strong>${escapeHtml(player.name)}</strong><small>${player.noData ? "No field time recorded" : `${Math.round(player.minutesMs / 60_000)} min · ${player.appearances} appearance${player.appearances === 1 ? "" : "s"}`}</small></div><span>${player.noData ? "Needs field time" : `${player.completedAppearances || 0} recorded matches`}</span><span class="player-outcome-value">${player.noData ? `<b>—</b>` : `<span class="player-team-range" title="Team range ${rangeLabel(low)} to ${rangeLabel(high)}; ${player.name} ${valueLabel(player)}"><i style="left:${position(player)}%"></i></span><b>${valueLabel(player)}</b>`}</span></article>`).join("")}</div>`;
 }
 
 function openAnalysisMethod(analysis) {
-  $("#method-data-summary").innerHTML = `<article><span>Recorded matches</span><strong>${analysis.matches}</strong></article><article><span>Completed matches</span><strong>${analysis.completedMatches}</strong></article><article><span>Goal events</span><strong>${analysis.goalsFor + analysis.goalsAgainst}</strong></article><article><span>Attempt events</span><strong>${analysis.attemptsFor + analysis.attemptsAgainst}</strong></article>`;
+  $("#method-data-summary").innerHTML = `<article><span>10+ minute matches</span><strong>${analysis.matches}</strong></article><article><span>Average duration</span><strong>${analysis.completedMatches ? `${analysis.reportMatchMinutes.toFixed(1)} min` : "—"}</strong></article><article><span>Score for</span><strong>${analysis.goalsFor}</strong></article><article><span>Score against</span><strong>${analysis.goalsAgainst}</strong></article>`;
   $("#season-analysis-panel").classList.add("hidden");
   $("#analysis-method-panel").classList.remove("hidden");
   window.scrollTo(0, 0);
@@ -923,18 +959,17 @@ function outcomeStatusHtml(readiness) {
 function metricPresentation(metric) {
   return {
     win: { label: "Win rate", unit: "%", digits: 0, favorable: 1 },
-    margin: { label: "Score margin", unit: "goals", digits: 1, favorable: 1 },
-    attemptsFor: { label: "Attempts for", unit: "/ 60", digits: 1, favorable: 1 },
-    attemptsAgainst: { label: "Attempts against", unit: "/ 60", digits: 1, favorable: -1 },
-    attemptsMargin: { label: "Attempts margin", unit: "/ 60", digits: 1, favorable: 1 }
+    margin: { label: "Score margin", unit: "", digits: 1, favorable: 1 },
+    goalsFor: { label: "Score for", unit: "", digits: 1, favorable: 1 },
+    goalsAgainst: { label: "Score against", unit: "", digits: 1, favorable: -1 }
   }[metric];
 }
 
 function metricValueLabel(value, metric) {
   const config = metricPresentation(metric);
   if (metric === "win") return `${Math.round(value)}%`;
-  if (metric === "attemptsFor" || metric === "attemptsAgainst") return `${Number(value).toFixed(config.digits)} ${config.unit}`;
-  return `${formatSigned(value, config.digits)} ${config.unit}`;
+  if (metric === "goalsFor" || metric === "goalsAgainst") return Number(value).toFixed(config.digits);
+  return formatSigned(value, config.digits);
 }
 
 function lineOutcomeHtml(analysis, metric) { return deploymentOutcomeHtml(analysis, metric, "line"); }
@@ -945,16 +980,15 @@ function formationOutcomeHtml(analysis, metric) {
   const actualReady = readiness.ready && analysis.formations.length > 0;
   const source = actualReady ? analysis.formations : DEMO_ANALYSIS.formations;
   const teamWinRate = analysis.winRate;
-  const teamMarginPer60 = analysis.exposureMs ? analysis.scoreMargin * 3_600_000 / analysis.exposureMs : 0;
-  const attemptsForBaseline = analysis.exposureMs ? analysis.attemptsFor * 3_600_000 / analysis.exposureMs : 0;
-  const attemptsAgainstBaseline = analysis.exposureMs ? analysis.attemptsAgainst * 3_600_000 / analysis.exposureMs : 0;
-  const attemptsMarginBaseline = attemptsForBaseline - attemptsAgainstBaseline;
+  const scale = reportMatchScale(analysis);
+  const teamMarginPerMatch = analysis.exposureMs ? analysis.scoreMargin * 3_600_000 / analysis.exposureMs * scale : 0;
+  const goalsForBaseline = analysis.exposureMs ? analysis.goalsFor * 3_600_000 / analysis.exposureMs * scale : 0;
+  const goalsAgainstBaseline = analysis.exposureMs ? analysis.goalsAgainst * 3_600_000 / analysis.exposureMs * scale : 0;
   const config = {
     win: { label: "smoothed win-rate lift", unit: "pts", favorable: 1, value: item => actualReady ? (item.smoothedWinRate - teamWinRate) * 100 : item.winRateLift },
-    margin: { label: "smoothed score-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedMarginPer60 - teamMarginPer60 : item.scoreMarginLift },
-    attemptsFor: { label: "smoothed attempts-for effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedAttemptsForPer60 - attemptsForBaseline : item.attemptsForEffect },
-    attemptsAgainst: { label: "smoothed attempts-against effect", unit: "/ 60", favorable: -1, value: item => actualReady ? item.smoothedAttemptsAgainstPer60 - attemptsAgainstBaseline : item.attemptsAgainstEffect },
-    attemptsMargin: { label: "smoothed attempts-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.smoothedAttemptDifferentialPer60 - attemptsMarginBaseline : item.attemptsForEffect - item.attemptsAgainstEffect }
+    margin: { label: "smoothed score-margin effect", unit: "", favorable: 1, value: item => actualReady ? marginRatePerMatch(analysis, item) - teamMarginPerMatch : item.scoreMarginLift },
+    goalsFor: { label: "smoothed score-for effect", unit: "", favorable: 1, value: item => actualReady ? scoreRatePerMatch(analysis, item, "for") - goalsForBaseline : item.scoreMarginLift / 2 },
+    goalsAgainst: { label: "smoothed score-against effect", unit: "", favorable: -1, value: item => actualReady ? scoreRatePerMatch(analysis, item, "against") - goalsAgainstBaseline : -item.scoreMarginLift / 2 }
   }[metric];
   const rows = source.map(item => ({ ...item, effect: config.value(item) })).sort((a, b) => (b.effect - a.effect) * config.favorable).slice(0, 6);
   const max = Math.max(1, ...rows.map(item => Math.abs(item.effect)));
@@ -970,18 +1004,17 @@ function deploymentOutcomeHtml(analysis, metric, scope) {
   const actualSource = isLine ? analysis.playerLines : analysis.playerPositions;
   const demoSource = isLine ? DEMO_ANALYSIS.playerLines : DEMO_ANALYSIS.playerPositions;
   const readiness = analysis.outcomeReadiness[isLine ? "lines" : "positions"][metric];
-  const actualReady = readiness.ready && (metric === "win" || metric === "margin" ? actualSource.some(item => item.completedAppearances) : actualSource.length > 0);
+  const actualReady = readiness.ready && actualSource.length > 0;
   const source = actualReady ? actualSource : demoSource;
-  const teamMargin = analysis.completedMatches ? analysis.scoreMargin / analysis.completedMatches : 0;
-  const attemptsForBaseline = analysis.exposureMs ? analysis.attemptsFor * 3_600_000 / analysis.exposureMs : 0;
-  const attemptsAgainstBaseline = analysis.exposureMs ? analysis.attemptsAgainst * 3_600_000 / analysis.exposureMs : 0;
-  const attemptsMarginBaseline = attemptsForBaseline - attemptsAgainstBaseline;
+  const scale = reportMatchScale(analysis);
+  const teamMarginPerMatch = analysis.exposureMs ? analysis.scoreMargin * 3_600_000 / analysis.exposureMs * scale : 0;
+  const goalsForBaseline = analysis.exposureMs ? analysis.goalsFor * 3_600_000 / analysis.exposureMs * scale : 0;
+  const goalsAgainstBaseline = analysis.exposureMs ? analysis.goalsAgainst * 3_600_000 / analysis.exposureMs * scale : 0;
   const config = {
-    win: { label: "win-rate lift", unit: "pts", favorable: 1, value: item => actualReady ? (item.winRate - analysis.winRate) * 100 : item.winRateLift },
-    margin: { label: "score-margin effect", unit: "goals", favorable: 1, value: item => actualReady ? item.scoreMargin - teamMargin : item.scoreMarginLift },
-    attemptsFor: { label: "shots-for effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.attemptsForPer60 - attemptsForBaseline : item.attemptsForEffect },
-    attemptsAgainst: { label: "shots-against effect", unit: "/ 60", favorable: -1, value: item => actualReady ? item.attemptsAgainstPer60 - attemptsAgainstBaseline : item.attemptsAgainstEffect },
-    attemptsMargin: { label: "attempts-margin effect", unit: "/ 60", favorable: 1, value: item => actualReady ? item.attemptDifferentialPer60 - attemptsMarginBaseline : item.attemptsForEffect - item.attemptsAgainstEffect }
+    win: { label: "posterior win-rate lift", unit: "pts", favorable: 1, value: item => actualReady ? (item.smoothedWinRate - analysis.winRate) * 100 : item.winRateLift },
+    margin: { label: "posterior score-margin effect", unit: "", favorable: 1, value: item => actualReady ? marginRatePerMatch(analysis, item) - teamMarginPerMatch : item.scoreMarginLift },
+    goalsFor: { label: "posterior score-for effect", unit: "", favorable: 1, value: item => actualReady ? scoreRatePerMatch(analysis, item, "for") - goalsForBaseline : item.scoreMarginLift / 2 },
+    goalsAgainst: { label: "posterior score-against effect", unit: "", favorable: -1, value: item => actualReady ? scoreRatePerMatch(analysis, item, "against") - goalsAgainstBaseline : -item.scoreMarginLift / 2 }
   }[metric];
   const rows = source.map(item => ({ ...item, effect: config.value(item) })).sort((a, b) => (b.effect - a.effect) * config.favorable).slice(0, 6);
   const max = Math.max(1, ...rows.map(item => Math.abs(item.effect)));
@@ -997,11 +1030,9 @@ function timingBreakdownHtml(analysis, view, metric) {
   const readiness = analysis.outcomeReadiness.playerTime[metric];
   const actualReady = readiness.ready;
   const config = metricPresentation(metric);
-  const bucketValue = bucket => metric === "win" ? bucket.winRate * 100
-    : metric === "margin" ? bucket.marginPer60
-      : metric === "attemptsFor" ? bucket.attemptsForPer60
-        : metric === "attemptsAgainst" ? bucket.attemptsAgainstPer60
-          : bucket.attemptDifferentialPer60 ?? bucket.attemptsForPer60 - bucket.attemptsAgainstPer60;
+  const bucketValue = bucket => metric === "win" ? (bucket.smoothedWinRate ?? bucket.winRate) * 100
+    : metric === "margin" ? marginRatePerMatch(analysis, bucket)
+      : scoreRatePerMatch(analysis, bucket, metric === "goalsFor" ? "for" : "against");
   if (view === "team") {
     const source = actualReady ? analysis.timing : DEMO_ANALYSIS.timing;
     const max = Math.max(1, ...source.map(item => Math.abs(bucketValue(item))));
@@ -1009,20 +1040,18 @@ function timingBreakdownHtml(analysis, view, metric) {
   }
   const players = actualReady ? analysis.playerTiming : DEMO_ANALYSIS.playerTiming;
   const seasonPlayers = actualReady ? analysis.players : DEMO_ANALYSIS.players;
-  return `${playerTimeRelationshipChartHtml(seasonPlayers, metric, actualReady)}<div class="player-timing-detail"><strong>Outcome by accumulated minutes played</strong><span>Player detail</span></div><div class="player-timing-table"><div class="player-timing-head"><span>Player</span><span>First 15 played</span><span>Next 15 played</span><span>After 30 played</span></div>${players.slice(0, 6).map(player => `<article><strong>${escapeHtml(player.name)}</strong>${player.buckets.map(bucket => `<span title="${escapeHtml(`${bucket.label} · ${config.label}`)}">${metricValueLabel(bucketValue(bucket), metric)}</span>`).join("")}</article>`).join("")}</div><p class="player-timing-caption">The graph summarizes the season; the table shows ${escapeHtml(config.label.toLowerCase())} during each player's accumulated minutes, even when they enter late or return after a substitution.</p>${outcomeStatusHtml(readiness)}`;
+  return `${playerTimeRelationshipChartHtml(seasonPlayers, metric, actualReady, analysis)}<div class="player-timing-detail"><strong>Outcome by accumulated minutes played</strong><span>Player detail</span></div><div class="player-timing-table"><div class="player-timing-head"><span>Player</span><span>First 15 played</span><span>Next 15 played</span><span>After 30 played</span></div>${players.slice(0, 6).map(player => `<article><strong>${escapeHtml(player.name)}</strong>${player.buckets.map(bucket => `<span title="${escapeHtml(`${bucket.label} · ${config.label}`)}">${metricValueLabel(bucketValue(bucket), metric)}</span>`).join("")}</article>`).join("")}</div><p class="player-timing-caption">The graph summarizes the season; the table shows ${escapeHtml(config.label.toLowerCase())} during each player's accumulated minutes, even when they enter late or return after a substitution.</p>${outcomeStatusHtml(readiness)}`;
 }
 
 function averageTimeOutcomeHtml(analysis, metric) {
   const readiness = analysis.outcomeReadiness.fatigue[metric];
   const actualReady = readiness.ready;
   const source = actualReady ? analysis.playerTime : DEMO_ANALYSIS.timing;
-  const outcomeValue = bucket => metric === "win" ? bucket.winRate * 100
-    : metric === "margin" ? bucket.marginPer60
-      : metric === "attemptsFor" ? bucket.attemptsForPer60
-        : metric === "attemptsAgainst" ? bucket.attemptsAgainstPer60
-          : bucket.attemptDifferentialPer60 ?? bucket.attemptsForPer60 - bucket.attemptsAgainstPer60;
-  const chartMetricLabel = metric === "margin" ? "score margin per 60 minutes" : metricPresentation(metric).label.toLowerCase();
-  const chartValueLabel = value => metric === "margin" ? `${formatSigned(value, 1)} / 60` : metricValueLabel(value, metric);
+  const outcomeValue = bucket => metric === "win" ? (bucket.smoothedWinRate ?? bucket.winRate) * 100
+    : metric === "margin" ? marginRatePerMatch(analysis, bucket)
+      : scoreRatePerMatch(analysis, bucket, metric === "goalsFor" ? "for" : "against");
+  const chartMetricLabel = metricPresentation(metric).label.toLowerCase();
+  const chartValueLabel = value => metric === "margin" ? formatSigned(value, 1) : metricValueLabel(value, metric);
   const values = source.map(outcomeValue);
   let minValue = Math.min(...values);
   let maxValue = Math.max(...values);
@@ -1044,14 +1073,12 @@ function averageTimeOutcomeHtml(analysis, metric) {
   </svg></div><p class="time-outcome-chart-caption">All player exposures are pooled into three time bands, allowing this team-level report to build sooner. Rates are normalized for exposure; the pattern is an association, not proof of causation.</p>${outcomeStatusHtml(readiness)}`;
 }
 
-function playerTimeRelationshipChartHtml(players, metric, actualReady) {
-  const chartMetricLabel = metric === "margin" ? "score margin per 60 minutes" : metricPresentation(metric).label.toLowerCase();
-  const chartValueLabel = value => metric === "margin" ? `${formatSigned(value, 1)} / 60` : metricValueLabel(value, metric);
-  const outcomeValue = player => metric === "win" ? player.winRate * 100
-    : metric === "margin" ? player.onFieldMarginPer60
-      : metric === "attemptsFor" ? player.attemptsForPer60
-        : metric === "attemptsAgainst" ? player.attemptsAgainstPer60
-          : player.attemptDifferentialPer60;
+function playerTimeRelationshipChartHtml(players, metric, actualReady, analysis) {
+  const chartMetricLabel = metricPresentation(metric).label.toLowerCase();
+  const chartValueLabel = value => metric === "margin" ? formatSigned(value, 1) : metricValueLabel(value, metric);
+  const outcomeValue = player => metric === "win" ? (player.smoothedWinRate ?? player.winRate) * 100
+    : metric === "margin" ? marginRatePerMatch(analysis, player)
+      : scoreRatePerMatch(analysis, player, metric === "goalsFor" ? "for" : "against");
   const points = players.filter(player => player.averageMinutes > 0 && Number.isFinite(outcomeValue(player))).map(player => ({
     name: player.name,
     minutes: player.averageMinutes,
@@ -1134,6 +1161,13 @@ function bindAnalysisControls(analysis) {
     controls.querySelectorAll("[data-playing-time-view]").forEach(item => item.classList.toggle("active", item === button));
     $("#playing-time-list").innerHTML = playingTimeListHtml(analysis.readiness.playingTime.ready && analysis.players.length ? analysis.players : DEMO_ANALYSIS.players, button.dataset.playingTimeView);
   }));
+  document.querySelectorAll("[data-category-metric-toggle]").forEach(controls => {
+    controls.querySelectorAll("[data-category-metric]").forEach(button => button.addEventListener("click", () => {
+      controls.querySelectorAll("[data-category-metric]").forEach(item => item.classList.toggle("active", item === button));
+      $("#category-report-body").innerHTML = outcomeReportHtml(analysis, controls.dataset.categoryMetricToggle, button.dataset.categoryMetric);
+      document.querySelectorAll("[data-analysis-method-link]").forEach(link => link.addEventListener("click", () => openAnalysisMethod(analysis)));
+    }));
+  });
   const guidancePlayer = document.querySelector("[data-position-guidance-player]");
   const guidanceControls = document.querySelector("[data-position-guidance-objective]");
   const renderGuidance = () => {
@@ -1221,8 +1255,6 @@ function renderScoreboard() {
   const c = state.config;
   $("#match-topbar-team").textContent = c.team;
   $("#team-name").textContent = c.team; $("#opponent-name").textContent = c.opponent;
-  $("#quick-team-name").textContent = c.team;
-  $("#quick-opponent-name").textContent = c.opponent;
   $("#match-label").textContent = `${c.competition} · ${c.date}`;
   $("#score-for").textContent = state.scoreFor; $("#score-against").textContent = state.scoreAgainst;
   const gameClock = formatClock(displayedGameTime(events, state.elapsedMs));
@@ -1277,7 +1309,6 @@ function isBetweenPeriods() {
 function renderField() {
   $("#field-count").textContent = `${state.fieldCount} / ${state.config.playersOnField}`;
   $("#clear-field").disabled = state.fieldCount === 0;
-  const recentChanges = recentSubstitutionState;
   const basePositions = activePositions();
   const positions = [...basePositions, ...Object.keys(state.field).filter(position => !basePositions.includes(position))];
   const renderPosition = (position, rowLength, index) => {
@@ -1285,8 +1316,7 @@ function renderField() {
     const column = positionColumn(position, rowLength, index);
     if (!id) return `<div class="empty-field-slot ${position === "gk" ? "keeper-slot" : ""}" style="grid-column:${column}" data-position="${escapeHtml(position)}"><span>＋</span><small>${escapeHtml(shortPosition(position))}</small></div>`;
     const p = state.players[id];
-    const recentlyOn = recentChanges.on.has(id);
-    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""} ${recentlyOn ? "recently-on" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift${recentlyOn ? ", just moved on" : ""}`)}">${shirtHtml(id, p.name)}${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
+    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift`)}">${shirtHtml(id, p.name)}${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
   const bandCount = bands.filter(band => positions.some(position => positionBand(position) === band)).length;
@@ -1816,17 +1846,11 @@ function timelineEventPayload(type, data, existing) {
 function renderReportDetails() {
   const timeline = activeTimeline(events);
   const goals = timeline.filter(event => ["goal_for", "goal_against"].includes(event.type));
-  const attempts = timeline.filter(event => event.type === "goal_attempt");
-  const attemptsFor = attempts.filter(event => event.payload?.team !== "against").length;
-  const attemptsAgainst = attempts.length - attemptsFor;
-  const attemptMax = Math.max(1, attemptsFor, attemptsAgainst);
-  const lineupChanges = timeline.filter(event => event.type === "player_moved").length;
   const result = state.scoreFor > state.scoreAgainst ? "Win" : state.scoreFor < state.scoreAgainst ? "Loss" : "Draw";
-  $("#match-report-summary").innerHTML = `<article><span>${state.completed ? "Result" : "Current result"}</span><strong>${state.scoreFor}–${state.scoreAgainst}</strong><small>${result}</small></article><article><span>Played</span><strong>${formatMinutes(state.elapsedMs)}</strong><small>${state.config.periodCount} × ${state.config.periodMinutes} min format</small></article><article><span>Lineup changes</span><strong>${lineupChanges}</strong><small>Substitutions and moves</small></article><article><span>Attempt diff.</span><strong class="${attemptsFor >= attemptsAgainst ? "positive-text" : "negative-text"}">${attempts.length ? formatSigned(attemptsFor - attemptsAgainst) : "—"}</strong><small>${attempts.length ? `${attemptsFor} for · ${attemptsAgainst} against` : "No attempts recorded"}</small></article>`;
-  const matchEvents = timeline.filter(event => ["goal_for", "goal_against", "goal_attempt"].includes(event.type));
-  $("#match-event-flow").innerHTML = matchEventGraphHtml(matchEvents);
+  const margin = state.scoreFor - state.scoreAgainst;
+  $("#match-report-summary").innerHTML = `<article><span>${state.completed ? "Result" : "Current result"}</span><strong>${result}</strong><small>${state.scoreFor}–${state.scoreAgainst}</small></article><article><span>Score for</span><strong>${state.scoreFor}</strong><small>${escapeHtml(state.config.team)}</small></article><article><span>Score against</span><strong>${state.scoreAgainst}</strong><small>${escapeHtml(state.config.opponent)}</small></article><article><span>Margin</span><strong class="${margin >= 0 ? "positive-text" : "negative-text"}">${formatSigned(margin)}</strong><small>Score for minus against</small></article>`;
+  $("#match-event-flow").innerHTML = matchEventGraphHtml(goals);
   $("#goal-player-groups").innerHTML = goalPlayerGroupsHtml(timeline, goals);
-  $("#attempts-report").innerHTML = attempts.length ? `<div class="match-attempt-bars"><article><div><span>${escapeHtml(state.config.team)}</span><strong>${attemptsFor}</strong></div><i><b style="width:${attemptsFor / attemptMax * 100}%"></b></i></article><article class="against"><div><span>${escapeHtml(state.config.opponent)}</span><strong>${attemptsAgainst}</strong></div><i><b style="width:${attemptsAgainst / attemptMax * 100}%"></b></i></article></div><p class="hint">Attempts are associated with the lineup on the field when each event was recorded.</p>` : "<p class='hint'>Use the Attempt buttons during the match to compare attacking pressure. Attempt tracking is optional.</p>";
   $("#minutes-report").innerHTML = Object.values(state.players).sort((a, b) => b.totalMs - a.totalMs).map(p => `<article class="minute-row"><strong>${escapeHtml(p.name)}</strong><span>${p.totalMs ? "On field" : "Did not play"}</span><b>${formatMinutes(p.totalMs)}</b></article>`).join("");
   const groupedStints = groupLineupStints(state.stints);
   const groupingNote = groupedStints.length < state.stints.length ? "<p class='hint'>Lineup changes within one minute are grouped as one substitution.</p>" : "";
@@ -1834,7 +1858,7 @@ function renderReportDetails() {
 }
 
 function matchEventGraphHtml(matchEvents) {
-  if (!matchEvents.length) return "<p class='hint'>Goals and optional attempts will appear here in game order.</p>";
+  if (!matchEvents.length) return "<p class='hint'>Goals will appear here in game order.</p>";
   const plotted = matchEvents.map(event => ({ event, timeMs: displayedGameTime(events, event.gameTimeMs, event.sequence) }));
   const maxMs = Math.max(60_000, displayedGameTime(events, state.elapsedMs), ...plotted.map(item => item.timeMs));
   const left = 58, right = 366, forY = 47, againstY = 104, axisY = 143;
@@ -1853,7 +1877,7 @@ function matchEventGraphHtml(matchEvents) {
       : `<g class="event-mark attempt ${against ? "against" : "for"}" transform="translate(${eventX} ${eventY})"><title>${escapeHtml(detail)}</title><circle r="5"></circle></g>`;
   }).join("");
   const ticks = [0, maxMs / 2, maxMs];
-  return `<div class="event-graph-legend"><span><i class="goal-key"></i>Goal</span><span><i class="attempt-key"></i>Attempt</span></div><div class="event-graph"><svg viewBox="0 0 380 165" role="img" aria-label="Goals and attempts over match time"><rect class="event-lane for" x="${left}" y="29" width="${right - left}" height="36" rx="8"></rect><rect class="event-lane against" x="${left}" y="86" width="${right - left}" height="36" rx="8"></rect><text class="event-lane-label" x="49" y="51" text-anchor="end">For</text><text class="event-lane-label" x="49" y="108" text-anchor="end">Against</text><line class="event-axis" x1="${left}" y1="${axisY}" x2="${right}" y2="${axisY}"></line>${ticks.map(tick => `<line class="event-tick" x1="${x(tick)}" y1="${axisY - 3}" x2="${x(tick)}" y2="${axisY + 3}"></line><text class="event-time-label" x="${x(tick)}" y="158" text-anchor="middle">${formatClock(tick)}</text>`).join("")}${marks}</svg></div>`;
+  return `<div class="event-graph-legend"><span><i class="goal-key"></i>Goal</span></div><div class="event-graph"><svg viewBox="0 0 380 165" role="img" aria-label="Goals over match time"><rect class="event-lane for" x="${left}" y="29" width="${right - left}" height="36" rx="8"></rect><rect class="event-lane against" x="${left}" y="86" width="${right - left}" height="36" rx="8"></rect><text class="event-lane-label" x="49" y="51" text-anchor="end">For</text><text class="event-lane-label" x="49" y="108" text-anchor="end">Against</text><line class="event-axis" x1="${left}" y1="${axisY}" x2="${right}" y2="${axisY}"></line>${ticks.map(tick => `<line class="event-tick" x1="${x(tick)}" y1="${axisY - 3}" x2="${x(tick)}" y2="${axisY + 3}"></line><text class="event-time-label" x="${x(tick)}" y="158" text-anchor="middle">${formatClock(tick)}</text>`).join("")}${marks}</svg></div>`;
 }
 
 function goalPlayerGroupsHtml(timeline, goals) {
