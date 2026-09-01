@@ -3,7 +3,7 @@
   "short_name": "LineUp JD",
   "start_url": ".",
   "display": "standalone",
-  "background_color": "#07130f",
-  "theme_color": "#c9ff5b",
+  "background_color": "#e8e3d8",
+  "theme_color": "#173f2c",
   "description": "Offline-first soccer playing-time tracker"
 }

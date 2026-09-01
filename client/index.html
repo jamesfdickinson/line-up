@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#c9ff5b">
+  <meta name="theme-color" content="#173f2c">
   <title>LineUp JD</title>
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="stylesheet" href="styles.css">
@@ -95,10 +95,15 @@
       <section id="live-panel" class="tab-panel">
         <div class="live-layout">
           <section class="field-section">
-            <div class="pitch-wrap"><div id="field" class="field"></div><button id="layout-button" class="layout-button" type="button">Layout</button><span id="field-count" class="field-count-overlay"></span></div>
+            <div class="pitch-wrap">
+              <div class="clipboard-guide"><strong>Lineup board</strong><span id="magnet-hint" aria-live="polite">Drag a magnet, or tap it then tap its destination</span></div>
+              <div id="field" class="field"></div>
+              <button id="layout-button" class="layout-button" type="button">Formation</button>
+              <span id="field-count" class="field-count-overlay"></span>
+            </div>
           </section>
           <aside>
-            <div class="section-heading"><div><span class="status-dot off"></span><h2>Off field</h2></div><div class="off-field-actions"><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
+            <div class="section-heading"><div><span class="status-dot off"></span><h2>Bench</h2></div><div class="off-field-actions"><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
             <div id="bench" class="bench"></div>
           </aside>
         </div>

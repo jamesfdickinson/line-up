@@ -1260,7 +1260,7 @@ function renderScoreboard() {
   const gameClock = formatClock(displayedGameTime(events, state.elapsedMs));
   $("#clock-button").textContent = gameClock;
   $("#live-status").textContent = state.completed ? "FINAL" : state.periodRunning ? "LIVE" : state.currentPeriod ? "PAUSED" : "READY";
-  $("#live-status").style.color = state.periodRunning ? "#c9ff5b" : "#ff9d4d";
+  $("#live-status").style.color = state.periodRunning ? "#245c41" : "#a7532d";
   const halfToggle = $("#half-toggle");
   const secondHalf = state.currentPeriod === 2;
   halfToggle.classList.toggle("second-half", secondHalf);
@@ -1309,6 +1309,14 @@ function isBetweenPeriods() {
 function renderField() {
   $("#field-count").textContent = `${state.fieldCount} / ${state.config.playersOnField}`;
   $("#clear-field").disabled = state.fieldCount === 0;
+  const selectedName = selectedPlayerId ? nameOf(selectedPlayerId) : "";
+  const magnetHint = $("#magnet-hint");
+  if (magnetHint) {
+    magnetHint.textContent = selectedName
+      ? `Moving ${selectedName} — tap a position, player, tray, or Not here`
+      : "Drag a magnet, or tap it then tap its destination";
+    magnetHint.closest(".clipboard-guide")?.classList.toggle("has-selection", Boolean(selectedName));
+  }
   const basePositions = activePositions();
   const positions = [...basePositions, ...Object.keys(state.field).filter(position => !basePositions.includes(position))];
   const renderPosition = (position, rowLength, index) => {
@@ -1316,7 +1324,7 @@ function renderField() {
     const column = positionColumn(position, rowLength, index);
     if (!id) return `<div class="empty-field-slot ${position === "gk" ? "keeper-slot" : ""}" style="grid-column:${column}" data-position="${escapeHtml(position)}"><span>＋</span><small>${escapeHtml(shortPosition(position))}</small></div>`;
     const p = state.players[id];
-    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift`)}">${shirtHtml(id, p.name)}${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
+    return `<article class="player-card player-token ${id === state.goalkeeperId ? "gk" : ""} ${id === selectedPlayerId ? "selected" : ""}" style="grid-column:${column}" draggable="true" tabindex="0" role="button" data-player-id="${escapeHtml(id)}" data-position="${escapeHtml(position)}" data-location="field" aria-pressed="${id === selectedPlayerId}" aria-label="${escapeHtml(`${p.name}, ${shortPosition(position)}, ${formatMinutes(p.currentStintMs)} in current shift`)}">${shirtHtml(id, p.name)}<span class="magnet-position">${escapeHtml(shortPosition(position))}</span>${playerTimeHtml(p.currentStintMs, "Time in current shift")}</article>`;
   };
   const bands = ["attack", "attacking-mid", "midfield", "utility", "defensive-mid", "defense", "keeper"];
   const bandCount = bands.filter(band => positions.some(position => positionBand(position) === band)).length;
@@ -1355,7 +1363,7 @@ function renderBench() {
   const playerTokens = players.map(player => {
     const offFieldMs = offFieldTime(player);
     const recentlyOff = recentChanges.off.has(player.playerId);
-    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-label="${escapeHtml(`${player.name}, resting ${formatMinutes(offFieldMs)}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}${playerTimeHtml(offFieldMs, "Time off field")}</article>`;
+    return `<article class="bench-card player-token ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" tabindex="0" role="button" data-player-id="${escapeHtml(player.playerId)}" data-location="bench" aria-pressed="${player.playerId === selectedPlayerId}" aria-label="${escapeHtml(`${player.name}, resting ${formatMinutes(offFieldMs)}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}${playerTimeHtml(offFieldMs, "Time off field")}</article>`;
   }).join("");
   $("#bench").innerHTML = `${playerTokens}<button id="add-player" class="add-player-tile" type="button" aria-label="Add players"><span class="add-player-icon" aria-hidden="true">+</span></button><div id="unavailable" class="unavailable-zone" aria-label="Not here"></div>`;
 }
@@ -1366,7 +1374,7 @@ function renderUnavailable() {
   const zone = $("#unavailable");
   zone.classList.toggle("has-players", unavailable.length > 0);
   zone.style.setProperty("--unavailable-columns", Math.min(unavailable.length + 1, 4));
-  const playerTokens = unavailable.map(player => { const recentlyOff = recentChanges.off.has(player.playerId); return `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-label="${escapeHtml(`${player.name}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}</article>`; }).join("");
+  const playerTokens = unavailable.map(player => { const recentlyOff = recentChanges.off.has(player.playerId); return `<article class="bench-card player-token unavailable-card ${player.playerId === selectedPlayerId ? "selected" : ""} ${recentlyOff ? "recently-off" : ""}" draggable="true" tabindex="0" role="button" data-player-id="${escapeHtml(player.playerId)}" data-location="unavailable" aria-pressed="${player.playerId === selectedPlayerId}" aria-label="${escapeHtml(`${player.name}${recentlyOff ? ", just moved off" : ""}`)}">${shirtHtml(player.playerId, player.name)}</article>`; }).join("");
   zone.innerHTML = `<span class="unavailable-label">Not here</span>${playerTokens}`;
 }
 
@@ -1397,7 +1405,12 @@ function bindPlayerInteractions() {
       event.preventDefault(); event.stopPropagation();
       handlePlayerDrop(event.dataTransfer.getData("text/player-id"), card.dataset.playerId);
     });
-    card.addEventListener("click", () => selectPlayer(card.dataset.playerId));
+    card.addEventListener("click", event => { event.stopPropagation(); selectPlayer(card.dataset.playerId); });
+    card.addEventListener("keydown", event => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectPlayer(card.dataset.playerId);
+    });
     card.addEventListener("pointerdown", startPointerDrag);
   }
   const field = $("#field"), bench = $("#bench"), unavailable = $("#unavailable"), emptySlots = [...document.querySelectorAll(".empty-field-slot[data-position]")];
@@ -1413,9 +1426,18 @@ function bindPlayerInteractions() {
   bench.ondragover = event => { event.preventDefault(); bench.classList.add("drag-target"); };
   bench.ondragleave = event => { if (!bench.contains(event.relatedTarget)) bench.classList.remove("drag-target"); };
   bench.ondrop = event => { event.preventDefault(); clearDragTargets(); moveToBench(event.dataTransfer.getData("text/player-id")); };
+  bench.onclick = event => {
+    if (!selectedPlayerId || event.target.closest("[data-player-id], #add-player, #unavailable")) return;
+    moveToBench(selectedPlayerId);
+  };
   unavailable.ondragover = event => { event.preventDefault(); event.stopPropagation(); unavailable.classList.add("drag-target"); };
   unavailable.ondragleave = event => { event.stopPropagation(); if (!unavailable.contains(event.relatedTarget)) unavailable.classList.remove("drag-target"); };
   unavailable.ondrop = event => { event.preventDefault(); event.stopPropagation(); clearDragTargets(); markUnavailable(event.dataTransfer.getData("text/player-id")); };
+  unavailable.onclick = event => {
+    event.stopPropagation();
+    if (!selectedPlayerId || event.target.closest("[data-player-id]")) return;
+    markUnavailable(selectedPlayerId);
+  };
 }
 
 async function handlePositionDrop(playerId, position) {
@@ -1425,9 +1447,22 @@ async function handlePositionDrop(playerId, position) {
   if (onField || state.fieldCount < state.config.playersOnField) await movePlayer(playerId, position);
 }
 
-function selectPlayer(playerId) {
+async function selectPlayer(playerId) {
   if (Date.now() < suppressClickUntil) return;
-  openPlayerMenu(playerId);
+  if (!selectedPlayerId) {
+    selectedPlayerId = playerId;
+    renderAt(clock?.elapsedMs || state.elapsedMs);
+    return;
+  }
+  if (selectedPlayerId === playerId) {
+    selectedPlayerId = null;
+    renderAt(clock?.elapsedMs || state.elapsedMs);
+    openPlayerMenu(playerId);
+    return;
+  }
+  const sourceId = selectedPlayerId;
+  selectedPlayerId = null;
+  await handlePlayerDrop(sourceId, playerId);
 }
 
 async function handlePlayerDrop(sourceId, targetId) {
@@ -1464,7 +1499,9 @@ async function handlePlayerDrop(sourceId, targetId) {
       { playerId: playerOutId, from: position, to: "off_field" },
       { playerId: playerInId, from: playerLocation(playerInId), to: position }
     ]);
+    return;
   }
+  renderAt(clock?.elapsedMs || state.elapsedMs);
 }
 
 function enterFromBench(playerId) {
@@ -1535,10 +1572,13 @@ function movePointerDrag(event) {
     pointerDrag.ghost.classList.add("drag-ghost");
     document.body.append(pointerDrag.ghost);
     pointerDrag.card.classList.add("dragging");
+    document.body.classList.add("magnet-drag-active");
+    navigator.vibrate?.(8);
   }
   pointerDrag.lastX = event.clientX; pointerDrag.lastY = event.clientY;
   pointerDrag.ghost.style.left = `${event.clientX}px`;
   pointerDrag.ghost.style.top = `${event.clientY}px`;
+  updatePointerDragTarget(event.clientX, event.clientY);
 }
 
 function finishPointerDrag(event) {
@@ -1564,9 +1604,18 @@ function cleanupPointerDrag() {
   pointerDrag.card.removeEventListener("pointermove", movePointerDrag);
   pointerDrag.ghost?.remove();
   pointerDrag = null;
+  document.body.classList.remove("magnet-drag-active");
   clearDragTargets();
 }
-function clearDragTargets() { document.querySelectorAll(".drag-target").forEach(element => element.classList.remove("drag-target")); }
+function updatePointerDragTarget(x, y) {
+  document.querySelectorAll(".pointer-drag-target").forEach(element => element.classList.remove("pointer-drag-target"));
+  const target = document.elementFromPoint(x, y);
+  const dropTarget = target?.closest("[data-player-id], .empty-field-slot, #unavailable, #bench");
+  if (dropTarget && dropTarget !== pointerDrag?.card) dropTarget.classList.add("pointer-drag-target");
+}
+function clearDragTargets() {
+  document.querySelectorAll(".drag-target,.pointer-drag-target").forEach(element => element.classList.remove("drag-target", "pointer-drag-target"));
+}
 
 async function toggleClock() {
   if (state.completed) return;
@@ -1660,9 +1709,9 @@ function openPlayerMenu(playerId) {
   const onField = Object.values(state.field).includes(playerId);
   const unavailable = state.unavailable?.some(player => player.playerId === playerId);
   let actions = "";
-  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="attempt">↗ Attempt by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="assist">Assist by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button>`;
+  if (onField && !state.completed) actions += `<button type="button" class="primary" data-player-action="goal">⚽ Goal by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="attempt">↗ Attempt by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="assist">Assist by ${escapeHtml(nameOf(playerId))}</button><button type="button" class="secondary" data-player-action="off">Move off field</button><button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
   else if (unavailable) actions += `<button type="button" class="secondary" data-player-action="restore">Move to off field</button>`;
-  else actions += `<button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
+  else if (!onField) actions += `<button type="button" class="secondary" data-player-action="absent">Move to not here</button>`;
   actions += `<button type="button" class="secondary" data-player-action="number">Jersey number${playerNumberOf(playerId) ? `: #${escapeHtml(playerNumberOf(playerId))}` : ""}</button>`;
   actions += `<button type="button" class="secondary danger-action" data-player-action="delete">Delete player</button>`;
   openDialog(nameOf(playerId), `<div class="dialog-fields action-list">${actions}</div>`, null, false);
@@ -1941,12 +1990,16 @@ function setSaveStatus(text, error = false) {
 }
 function nameOf(id) { return state.players[id]?.name || state.config?.roster.find(p => p.playerId === id)?.name || "Unknown"; }
 function playerNumberOf(id) { return team?.players.find(player => player.playerId === id)?.number || ""; }
-function shortPlayerName(name) {
-  const firstName = String(name || "").trim().split(/\s+/)[0] || "?";
-  return Array.from(firstName.toUpperCase()).slice(0, 4).join("");
+function playerMarkerLabel(name) {
+  const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
+  const take = (value, length) => Array.from(value || "?").slice(0, length).join("").toUpperCase();
+  if (parts.length > 1) return `${take(parts[0], 2)}.${take(parts.at(-1), 2)}`;
+  return take(parts[0], 3);
 }
 function shirtHtml(id, name) {
-  return `<span class="shirt-icon"><span class="shirt-name">${escapeHtml(shortPlayerName(name))}</span><span class="shirt-number">${escapeHtml(playerNumberOf(id))}</span></span>`;
+  const label = playerMarkerLabel(name);
+  const labelClass = label.includes(".") ? "two-name" : "single-name";
+  return `<span class="shirt-icon"><span class="shirt-number ${labelClass}">${escapeHtml(label)}</span></span>`;
 }
 function playerTimeHtml(ms, title) {
   const minutes = Math.floor(ms / 60_000);

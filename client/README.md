@@ -35,7 +35,7 @@ The analysis page shows model status and the last-updated time but does not expo
 
 - Match, roster, lineup, position, goalkeeper, and rotation setup
 - One-step match creation with pregame configuration embedded on the game page
-- Drag-and-drop or tap-to-select field/bench substitutions and position swaps
+- Drag-and-drop or tap-then-tap field/bench substitutions and position swaps
 - Minimal live view centered on `On field`, `Off field`, and one `Score` action
 - Portrait-phone layout that keeps the live field, off-field row, score, and controls within the viewport
 - Team → match hierarchy with a persistent team roster and match list
@@ -49,7 +49,7 @@ The analysis page shows model status and the last-updated time but does not expo
 - Dragging an on-field player into the off-field area always removes them without switching another player in
 - One-tap, undoable `Clear field` action moves the full lineup to the bench
 - Draggable `Not here` lane keeps absent players visible and lets them move back to `Off field`
-- Players are represented by draggable shirt silhouettes with their initials, without surrounding cards
+- Players are represented by round, draggable clipboard magnets labeled from their names
 - Player taps open a context menu; on-field players can be recorded as the scorer
 - Team goals allow a player or `Unknown`, while movement events do not show undo popups
 - Pitch-mounted score controls sit beside the attacking and defending goals; More is in the top-right header
