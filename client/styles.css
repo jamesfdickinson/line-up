@@ -456,7 +456,9 @@ body.match-open main{
   box-shadow:0 4px 7px #1535255e,inset 0 0 0 4px #f4c84f;
   transition:transform .14s ease,box-shadow .14s ease,filter .14s ease;
 }
-.match-open .player-token.gk .shirt-icon{
+.match-open .player-token.gk .shirt-icon,
+.match-open .position-band .player-token.gk .shirt-icon,
+.match-open .field.dense-layout .position-band .player-token.gk .shirt-icon{
   background:#e78355;
   color:#4b2113;
   box-shadow:0 4px 7px #1535255e,inset 0 0 0 2px #c9623b;
@@ -508,6 +510,8 @@ body.match-open main{
   font-size:9px;
   text-shadow:0 1px 2px #113b28;
 }
+.match-open .position-band .player-token .player-time,
+.match-open .field.dense-layout .position-band .player-token .player-time{font-size:11px}
 .match-open .player-token.selected .shirt-icon{
   filter:none;
   transform:translateY(-4px) scale(1.08);
@@ -660,6 +664,8 @@ body.match-open main{
   .match-open .player-token .player-time,
   .match-open .position-band .player-token .player-time,
   .match-open .field.dense-layout .position-band .player-token .player-time{font-size:8px}
+  .match-open .position-band .player-token .player-time,
+  .match-open .field.dense-layout .position-band .player-token .player-time{font-size:9px}
   .match-open .empty-field-slot{width:clamp(38px,6vh,50px);min-height:clamp(38px,6vh,50px)}
   .match-open .layout-button,.match-open .field-count-overlay{bottom:12px}
   .match-open .layout-button{left:12px}.match-open .field-count-overlay{right:12px}
@@ -667,12 +673,12 @@ body.match-open main{
   .match-open .live-layout aside .section-heading{min-height:16px;margin-bottom:2px}
   .match-open .live-layout aside .section-heading h2{font-size:11px}
   .match-open .bench{min-height:40px;padding:3px;overflow:visible;display:grid;grid-template-columns:repeat(auto-fill,minmax(40px,1fr));gap:2px}
-  .match-open .bench>.player-token{width:100%;min-width:0;min-height:38px}
+  .match-open .bench>.player-token{width:100%;min-width:0;min-height:46px}
   .match-open .bench>.player-token .shirt-icon{width:36px;height:36px}
   .match-open .bench>.player-token .shirt-number{font-size:10.5px}
   .match-open .bench>.player-token .shirt-number.two-name{font-size:8.5px}
   .match-open .bench>.player-token .shirt-name{max-width:50px;font-size:7px}
-  .match-open .bench .player-token .player-time{display:none}
+  .match-open .bench .player-token .player-time{display:inline-flex;font-size:8px}
   .match-open .bench .add-player-tile{min-height:34px}.match-open .bench .add-player-icon{width:32px;height:32px;font-size:20px}
   .match-open .unavailable-zone{grid-column:span var(--unavailable-columns,1)/-1!important;justify-self:stretch;width:auto;max-width:100%;margin-left:0;padding:1px}
   .match-open .unavailable-zone .player-token{min-width:27px;min-height:27px}
