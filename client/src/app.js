@@ -14,6 +14,7 @@ import { groupLineupStints } from "./domain/lineup-stint.js";
 import { BROAD_ROLE_SAMPLE_MS, EXACT_POSITION_SAMPLE_MS, positionGuidanceReadiness, rankPlayerDeployments } from "./domain/position-guidance.js";
 import { createSampleDataset, sampleDataOptions } from "./domain/sample-data.js";
 import { createFullBackup, mergeEventHistories, parseFullBackup } from "./domain/backup.js";
+import { splitPlayerNames } from "./domain/player-entry.js";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -555,13 +556,15 @@ async function renderTeamDashboard() {
 }
 
 function openAddPlayer() {
-  const fields = () => `<div class="player-entry-row"><input name="playerName" autocomplete="off" placeholder="Player name" aria-label="Player name"><input class="player-number-input" name="playerNumber" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" placeholder="#" aria-label="Jersey number"></div>`;
-  openDialog("Add players", `<div class="dialog-fields"><label>Players<div id="player-name-list" class="player-name-list">${fields()}</div></label><p class="hint">Jersey numbers are saved with ${escapeHtml(team.name)} and are not copied into the match event log.</p></div>`, async data => {
+  const fields = () => `<div class="player-entry-row"><input name="playerName" autocomplete="off" placeholder="Player name(s), separated by commas" aria-label="Player names"><input class="player-number-input" name="playerNumber" inputmode="numeric" pattern="[0-9]{1,2}" maxlength="2" placeholder="#" aria-label="Jersey number"></div>`;
+  openDialog("Add players", `<div class="dialog-fields"><label>Players<div id="player-name-list" class="player-name-list">${fields()}</div></label><p class="hint">Enter one name per row or separate names with commas. Add jersey numbers on single-name rows; they are saved with ${escapeHtml(team.name)} and are not copied into the match event log.</p></div>`, async data => {
     const numberValues = data.getAll("playerNumber");
-    const entries = data.getAll("playerName").map((value, index) => ({
-      name: String(value).trim(),
-      number: normalizePlayerNumber(numberValues[index])
-    })).filter(entry => entry.name);
+    const entries = data.getAll("playerName").flatMap((value, index) => {
+      const names = splitPlayerNames(value);
+      const number = normalizePlayerNumber(numberValues[index]);
+      if (names.length > 1 && number) throw new Error("Add jersey numbers on separate, single-name rows.");
+      return names.map(name => ({ name, number }));
+    });
     const names = entries.map(entry => entry.name);
     if (!names.length) throw new Error("Enter at least one player name.");
     const keys = names.map(name => name.toLocaleLowerCase());

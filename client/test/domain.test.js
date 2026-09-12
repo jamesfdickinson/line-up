@@ -4,6 +4,7 @@ import { activeTimeline } from "../src/domain/match-event.js";
 import { LineupProjector } from "../src/domain/lineup-projector.js";
 import { SuggestionEngine } from "../src/domain/suggestion-engine.js";
 import { eventPlayerRecord, orderedScorerGroups, playerIdFromName } from "../src/domain/player-label.js";
+import { splitPlayerNames } from "../src/domain/player-entry.js";
 import { exportEventsCsv, exportMatchJson } from "../src/domain/exporter.js";
 import { MatchClock } from "../src/domain/match-clock.js";
 import { matchIdsForTeam } from "../src/domain/team.js";
@@ -44,6 +45,11 @@ test("a match paused for three hours appears over only in the main-menu status",
 
 test("uses the exact trimmed player name as the player ID", () => {
   assert.equal(playerIdFromName("  Alex Morgan  "), "Alex Morgan");
+});
+
+test("splits comma-delimited player names and ignores empty entries", () => {
+  assert.deepEqual(splitPlayerNames(" Alex Morgan, Blair, , Casey "), ["Alex Morgan", "Blair", "Casey"]);
+  assert.deepEqual(splitPlayerNames("  Taylor  "), ["Taylor"]);
 });
 
 test("keeps team jersey numbers out of event player records", () => {
