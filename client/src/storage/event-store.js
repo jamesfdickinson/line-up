@@ -81,6 +81,7 @@ export class EventStore {
   async getActiveMatchId() { return (await this.getMeta("activeMatchId"))?.value || null; }
   async setMeta(key, value) { return this.#request("meta", "readwrite", store => store.put({ key, value })); }
   async getMeta(key) { return this.#request("meta", "readonly", store => store.get(key)); }
+  async deleteMeta(key) { return this.#request("meta", "readwrite", store => store.delete(key)); }
 
   #request(storeName, mode, operation) {
     return new Promise((resolve, reject) => {

@@ -177,14 +177,11 @@ async function init() {
   try {
     await store.open();
     const storedTeams = await store.getMeta("teams");
-    if (storedTeams) teams = normalizeTeams(storedTeams.value);
-    else {
-      const legacyTeam = (await store.getMeta("team"))?.value;
-      teams = normalizeTeams(legacyTeam ? [legacyTeam] : []);
-    }
+    teams = normalizeTeams(storedTeams?.value || []);
     const activeTeamId = (await store.getMeta("activeTeamId"))?.value;
     team = teams.find(item => item.teamId === activeTeamId) || teams[0] || null;
     await persistTeams();
+    await store.deleteMeta("team");
     await renderTeamDashboard();
     setSaveStatus("Saved on this device");
   } catch (error) {
@@ -243,7 +240,6 @@ async function saveTeam() {
 async function persistTeams() {
   await store.setMeta("teams", teams);
   await store.setMeta("activeTeamId", team?.teamId || null);
-  await store.setMeta("team", team);
 }
 
 async function openTeamManager() {
@@ -316,8 +312,7 @@ async function exportCurrentTeamBackup() {
   const teamMeta = allMeta.filter(record => record.key === `analysisReportSeen:${team.teamId}`);
   teamMeta.push(
     { key: "teams", value: [team] },
-    { key: "activeTeamId", value: team.teamId },
-    { key: "team", value: team }
+    { key: "activeTeamId", value: team.teamId }
   );
   const backup = createFullBackup(teamMeta, teamEvents);
   const safeName = team.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "team";
@@ -330,16 +325,14 @@ async function mergeFullBackup(backup) {
   const localMeta = await store.allMeta();
   const eventMerge = mergeEventHistories(localEvents, backup.events);
   const incomingStoredTeams = backup.meta.find(record => record.key === "teams")?.value;
-  const incomingLegacyTeam = backup.meta.find(record => record.key === "team")?.value;
-  const incomingTeams = normalizeTeams(incomingStoredTeams || (incomingLegacyTeam ? [incomingLegacyTeam] : []));
+  const incomingTeams = normalizeTeams(incomingStoredTeams || []);
   const teamMerge = mergeTeamCollections(teams, incomingTeams);
-  const metaByKey = new Map(localMeta.map(record => [record.key, structuredClone(record)]));
+  const metaByKey = new Map(localMeta.filter(record => record.key.startsWith("analysisReportSeen:")).map(record => [record.key, structuredClone(record)]));
   for (const record of backup.meta) {
-    if (["teams", "team", "activeTeamId", "activeMatchId"].includes(record.key)) continue;
     if (record.key.startsWith("analysisReportSeen:")) {
       const current = Number(metaByKey.get(record.key)?.value || 0);
       metaByKey.set(record.key, { key: record.key, value: Math.max(current, Number(record.value || 0)) });
-    } else if (!metaByKey.has(record.key)) metaByKey.set(record.key, structuredClone(record));
+    }
   }
   const localActiveTeamId = team?.teamId;
   const incomingActiveTeamId = backup.meta.find(record => record.key === "activeTeamId")?.value;
@@ -350,8 +343,6 @@ async function mergeFullBackup(backup) {
     || null;
   metaByKey.set("teams", { key: "teams", value: teams });
   metaByKey.set("activeTeamId", { key: "activeTeamId", value: team?.teamId || null });
-  metaByKey.set("team", { key: "team", value: team });
-  metaByKey.delete("activeMatchId");
   await store.replaceAll({ events: eventMerge.events, meta: [...metaByKey.values()] });
   await persistTeams();
   await resetAfterDataChange();
