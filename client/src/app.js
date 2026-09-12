@@ -166,9 +166,7 @@ let nativeDragging = false;
 let suppressClickUntil = 0;
 let team = null;
 let teams = [];
-let readinessMatchId = null;
-let fieldWasFull = false;
-let stoppedFullPulse = false;
+let teamManagerOpen = false;
 let substitutionHighlightTimer = null;
 let recentSubstitutionState = { on: new Set(), off: new Set(), nextExpiryMs: null };
 
@@ -181,8 +179,8 @@ async function init() {
     const storedTeams = await store.getMeta("teams");
     if (storedTeams) teams = normalizeTeams(storedTeams.value);
     else {
-      const legacyTeam = (await store.getMeta("team"))?.value || await createInitialTeam();
-      teams = normalizeTeams([legacyTeam]);
+      const legacyTeam = (await store.getMeta("team"))?.value;
+      teams = normalizeTeams(legacyTeam ? [legacyTeam] : []);
     }
     const activeTeamId = (await store.getMeta("activeTeamId"))?.value;
     team = teams.find(item => item.teamId === activeTeamId) || teams[0] || null;
@@ -203,8 +201,14 @@ function bindStaticEvents() {
   $("#create-new-match").addEventListener("click", createBlankMatch);
   $("#analysis-card").addEventListener("click", showSeasonAnalysis);
   $("#data-tools-link").addEventListener("click", openDataTools);
-  $("#team-menu").addEventListener("click", openTeamMenu);
+  $("#team-menu").addEventListener("click", openTeamManager);
   $("#add-first-team").addEventListener("click", openAddTeam);
+  $("#team-manager-list").addEventListener("click", event => {
+    const select = event.target.closest("[data-team-select]");
+    const options = event.target.closest("[data-team-options]");
+    if (select) selectTeam(select.dataset.teamSelect);
+    if (options) openTeamOptions(options.dataset.teamOptions);
+  });
   $("#back-to-team").addEventListener("click", returnFromAnalysis);
   $("#back-to-analysis").addEventListener("click", () => { $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden"); window.scrollTo(0, 0); });
   $("#team-matches").addEventListener("click", event => { const button = event.target.closest("[data-open-match]"); if (button) loadMatch(button.dataset.openMatch); });
@@ -215,18 +219,17 @@ function bindStaticEvents() {
   $("#score-against-button").onclick = event => { event.preventDefault(); event.stopPropagation(); recordSimple("goal_against").catch(showActionError); };
   $("#clear-field").addEventListener("click", clearField);
   $("#layout-button").addEventListener("click", openLayoutPicker);
+  $("#live-panel").addEventListener("click", handleLiveTap);
+  $("#live-panel").addEventListener("pointerdown", startPointerDrag);
+  $("#live-panel").addEventListener("pointermove", movePointerDrag);
+  $("#live-panel").addEventListener("pointerup", finishPointerDrag);
+  $("#live-panel").addEventListener("pointercancel", cancelPointerDrag);
   $("#more-actions").addEventListener("click", openMoreActions);
   $("#match-back").addEventListener("click", returnToTeam);
   $("#add-note").addEventListener("click", openTimelineAdd);
   $("#undo").addEventListener("click", undoLatest);
   $("#export-json").addEventListener("click", () => downloadFile(fileBase() + ".json", exportMatchJson(events, state), "application/json"));
   document.querySelectorAll(".tab").forEach(button => button.addEventListener("click", () => switchTab(button.dataset.view)));
-}
-
-async function createInitialTeam() {
-  const initial = { teamId: createId(), name: $("#team-name-input").value.trim() || "My Team", players: [] };
-  await store.setMeta("team", initial);
-  return initial;
 }
 
 async function saveTeam() {
@@ -243,17 +246,13 @@ async function persistTeams() {
   await store.setMeta("team", team);
 }
 
-function openTeamMenu() {
-  const rows = teams.map(item => `<div class="team-menu-row"><button type="button" class="team-select ${item.teamId === team?.teamId ? "active" : ""}" data-team-select="${escapeHtml(item.teamId)}"><strong>${escapeHtml(item.name)}</strong>${item.teamId === team?.teamId ? "<small>Current</small>" : ""}</button><button type="button" class="team-delete" data-team-delete="${escapeHtml(item.teamId)}" aria-label="More options for ${escapeHtml(item.name)}" title="More options">•••</button></div>`).join("");
-  openDialog("Teams", `<div class="team-menu-list">${rows || "<p class='hint'>No teams yet.</p>"}<button type="button" class="primary add-team-menu" data-add-team>+ Add team</button></div>`, null, false);
-  $("#dialog-body").onclick = event => {
-    const add = event.target.closest("[data-add-team]");
-    const select = event.target.closest("[data-team-select]");
-    const remove = event.target.closest("[data-team-delete]");
-    if (add) { $("#action-dialog").close(); openAddTeam(); }
-    if (select) { $("#action-dialog").close(); selectTeam(select.dataset.teamSelect); }
-    if (remove) { $("#action-dialog").close(); openTeamOptions(remove.dataset.teamDelete); }
-  };
+async function openTeamManager() {
+  teamManagerOpen = true;
+  $("#season-analysis-panel").classList.add("hidden");
+  $("#analysis-method-panel").classList.add("hidden");
+  $("#setup-view").classList.remove("analysis-open", "analysis-detail-open");
+  await renderTeamDashboard();
+  window.scrollTo(0, 0);
 }
 
 function openDataTools() {
@@ -433,10 +432,30 @@ async function loadSampleData(kind) {
   window.scrollTo(0, 0);
 }
 
+function openEditTeam(teamId) {
+  const target = teams.find(item => item.teamId === teamId);
+  if (!target) return;
+  openDialog("Edit team", `<div class="dialog-fields"><label>Team name<input name="teamName" autocomplete="off" value="${escapeHtml(target.name)}" required autofocus></label></div>`, async data => {
+    const name = String(data.get("teamName") || "").trim();
+    if (!name) throw new Error("Enter a team name.");
+    if (teams.some(item => item.teamId !== teamId && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("A team with that name already exists.");
+    target.name = name;
+    if (team?.teamId === teamId) team = target;
+    await persistTeams();
+    await renderTeamDashboard();
+    setSaveStatus("Team updated");
+  });
+  $("#dialog-confirm").textContent = "Save";
+}
+
 function openTeamOptions(teamId) {
   const target = teams.find(item => item.teamId === teamId);
   if (!target) return;
-  openDialog(target.name, `<div class="dialog-fields action-list"><button type="button" class="secondary danger-action" data-delete-team-option>Delete team</button></div>`, null, false);
+  openDialog(target.name, `<div class="dialog-fields action-list"><button type="button" class="secondary" data-edit-team-option>Edit team</button><button type="button" class="secondary danger-action" data-delete-team-option>Delete team</button></div>`, null, false);
+  $("[data-edit-team-option]").addEventListener("click", () => {
+    $("#action-dialog").close();
+    openEditTeam(teamId);
+  });
   $("[data-delete-team-option]").addEventListener("click", () => {
     $("#action-dialog").close();
     openDeleteTeam(teamId);
@@ -450,6 +469,7 @@ function openAddTeam() {
     if (teams.some(item => item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error("A team with that name already exists.");
     team = { teamId: createId(), name, players: [] };
     teams.push(team);
+    teamManagerOpen = false;
     await persistTeams();
     $("#season-analysis-panel").classList.add("hidden");
     $("#analysis-method-panel").classList.add("hidden");
@@ -462,6 +482,7 @@ async function selectTeam(teamId) {
   const selected = teams.find(item => item.teamId === teamId);
   if (!selected) return;
   team = selected;
+  teamManagerOpen = false;
   await persistTeams();
   $("#season-analysis-panel").classList.add("hidden");
   $("#analysis-method-panel").classList.add("hidden");
@@ -492,7 +513,7 @@ async function createBlankMatch() {
   matchId = createId();
   events = [];
   clock?.destroy();
-  clock = new MatchClock({ onTick: renderAt });
+  clock = new MatchClock({ onTick: renderClockTick });
   const config = {
     teamId: team.teamId, team: team.name, opponent: $("#new-opponent").value.trim() || "Opponent",
     date: new Date().toISOString().slice(0, 10), competition: "Season", opponentStrength: "Similar",
@@ -517,12 +538,19 @@ async function loadMatch(id) {
 
 async function renderTeamDashboard() {
   const hasTeam = Boolean(team);
+  if (!hasTeam) teamManagerOpen = true;
+  const showTeamManager = teamManagerOpen || !hasTeam;
   $("#header-team-name").textContent = team?.name || "";
-  $("#no-team-panel").classList.toggle("hidden", hasTeam);
-  $("#team-dashboard").classList.toggle("hidden", !hasTeam);
+  $("#setup-view").classList.toggle("team-manager-open", showTeamManager);
+  $("#no-team-panel").classList.toggle("hidden", !showTeamManager);
+  $("#team-dashboard").classList.toggle("hidden", showTeamManager);
   $("#team-name-input").disabled = !hasTeam;
+  $("#team-manager-title").textContent = teams.length ? "Teams" : "No teams yet";
+  $("#team-manager-hint").textContent = teams.length ? "Select a team or manage your teams." : "Add a team to create players and matches.";
+  $("#team-manager-list").innerHTML = teams.map(item => `<article class="team-manager-row ${item.teamId === team?.teamId ? "active" : ""}"><button type="button" class="team-manager-select" data-team-select="${escapeHtml(item.teamId)}"><span><strong>${escapeHtml(item.name)}</strong><small>${item.players.length} player${item.players.length === 1 ? "" : "s"}</small></span>${item.teamId === team?.teamId ? "<em>Current</em>" : "<em>Open</em>"}</button><button type="button" class="team-manager-options" data-team-options="${escapeHtml(item.teamId)}" aria-label="Options for ${escapeHtml(item.name)}" title="Team options">•••</button></article>`).join("");
   if (!hasTeam) { $("#team-name-input").value = ""; return; }
   $("#team-name-input").value = team.name;
+  if (showTeamManager) return;
   const all = await store.allEvents();
   const ids = matchIdsForTeam(all, team.teamId);
   const records = ids.map(id => analysisRecord(all.filter(event => event.matchId === id))).sort((a, b) => b.state.config.date.localeCompare(a.state.config.date));
@@ -1217,7 +1245,7 @@ function restoreMatch() {
   const last = activeTimeline(events).at(-1);
   let elapsedMs = projected.elapsedMs;
   if (projected.periodRunning && last) elapsedMs += Math.max(0, Date.now() - new Date(last.realTimestamp).getTime());
-  clock = new MatchClock({ elapsedMs, running: projected.periodRunning, onTick: renderAt });
+  clock = new MatchClock({ elapsedMs, running: projected.periodRunning, onTick: renderClockTick });
   showMatch();
   renderAt(elapsedMs);
 }
@@ -1254,6 +1282,37 @@ function renderAt(elapsedMs) {
   if (!$("#report-panel").classList.contains("hidden")) renderReport();
 }
 
+function renderClockTick(elapsedMs) {
+  if (!matchId) return;
+  state = projector.project(events, elapsedMs);
+  renderScoreboard();
+  refreshPlayerTimes();
+}
+
+function refreshPlayerTimes() {
+  document.querySelectorAll("#live-panel [data-player-id]").forEach(card => {
+    const player = state.players[card.dataset.playerId];
+    const time = card.querySelector(".player-time");
+    if (!player || !time) return;
+    const ms = card.dataset.location === "field"
+      ? player.currentStintMs
+      : card.dataset.location === "bench"
+        ? Math.max(0, state.elapsedMs - (player.lastExitedAt ?? state.elapsedMs))
+        : null;
+    if (ms === null) return;
+    const minutes = Math.floor(ms / 60_000);
+    if (time.dataset.playerMinutes === String(minutes)) return;
+    time.dataset.playerMinutes = String(minutes);
+    time.querySelector("span").textContent = minutes;
+    time.setAttribute("aria-label", `${minutes} ${minutes === 1 ? "minute" : "minutes"}`);
+    if (card.dataset.location === "field") {
+      card.setAttribute("aria-label", `${player.name}, ${shortPosition(card.dataset.position)}, ${formatMinutes(ms)} in current shift`);
+    } else {
+      card.setAttribute("aria-label", `${player.name}, resting ${formatMinutes(ms)}${card.classList.contains("recently-off") ? ", just moved off" : ""}`);
+    }
+  });
+}
+
 function renderScoreboard() {
   const c = state.config;
   $("#match-topbar-team").textContent = c.team;
@@ -1286,22 +1345,14 @@ function renderMatchControls() {
   control.classList.toggle("hidden", state.completed || (isBetweenPeriods() && state.currentPeriod >= state.config.periodCount));
   const running = Boolean(clock?.running);
   const fieldReady = state.fieldCount === state.config.playersOnField;
-  if (readinessMatchId !== state.matchId) {
-    readinessMatchId = state.matchId;
-    fieldWasFull = fieldReady;
-    stoppedFullPulse = false;
-  } else {
-    const becameFullWhileStopped = fieldReady && !fieldWasFull && !clock?.running;
-    if (becameFullWhileStopped) stoppedFullPulse = true;
-    if (!fieldReady || clock?.running || state.completed) stoppedFullPulse = false;
-    fieldWasFull = fieldReady;
-  }
-  control.classList.toggle("kickoff-pulse", stoppedFullPulse);
+  const kickoffReady = fieldReady && !running && !state.completed;
+  control.classList.toggle("kickoff-pulse", kickoffReady);
   control.innerHTML = running
     ? '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="1"></rect></svg>'
     : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>';
-  control.setAttribute("aria-label", running ? "Pause timer" : state.currentPeriod ? "Resume timer" : "Start game");
-  control.title = running ? "Pause timer" : state.currentPeriod ? "Resume timer" : "Start game";
+  const stoppedLabel = kickoffReady ? "Lineup ready — start timer" : state.currentPeriod ? "Resume timer" : "Start game";
+  control.setAttribute("aria-label", running ? "Pause timer" : stoppedLabel);
+  control.title = running ? "Pause timer" : stoppedLabel;
 }
 
 function isBetweenPeriods() {
@@ -1408,20 +1459,17 @@ function bindPlayerInteractions() {
       event.preventDefault(); event.stopPropagation();
       handlePlayerDrop(event.dataTransfer.getData("text/player-id"), card.dataset.playerId);
     });
-    card.addEventListener("click", event => { event.stopPropagation(); selectPlayer(card.dataset.playerId); });
     card.addEventListener("keydown", event => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       selectPlayer(card.dataset.playerId);
     });
-    card.addEventListener("pointerdown", startPointerDrag);
   }
   const field = $("#field"), bench = $("#bench"), unavailable = $("#unavailable"), emptySlots = [...document.querySelectorAll(".empty-field-slot[data-position]")];
   for (const slot of emptySlots) {
     slot.addEventListener("dragover", event => { event.preventDefault(); event.stopPropagation(); slot.classList.add("drag-target"); });
     slot.addEventListener("dragleave", () => slot.classList.remove("drag-target"));
     slot.addEventListener("drop", event => { event.preventDefault(); event.stopPropagation(); handlePositionDrop(event.dataTransfer.getData("text/player-id"), slot.dataset.position); });
-    slot.addEventListener("click", () => { if (selectedPlayerId) handlePositionDrop(selectedPlayerId, slot.dataset.position); });
   }
   field.ondragover = event => { event.preventDefault(); field.classList.add("drag-target"); };
   field.ondragleave = event => { if (!field.contains(event.relatedTarget)) field.classList.remove("drag-target"); };
@@ -1429,18 +1477,25 @@ function bindPlayerInteractions() {
   bench.ondragover = event => { event.preventDefault(); bench.classList.add("drag-target"); };
   bench.ondragleave = event => { if (!bench.contains(event.relatedTarget)) bench.classList.remove("drag-target"); };
   bench.ondrop = event => { event.preventDefault(); clearDragTargets(); moveToBench(event.dataTransfer.getData("text/player-id")); };
-  bench.onclick = event => {
-    if (!selectedPlayerId || event.target.closest("[data-player-id], #add-player, #unavailable")) return;
-    moveToBench(selectedPlayerId);
-  };
   unavailable.ondragover = event => { event.preventDefault(); event.stopPropagation(); unavailable.classList.add("drag-target"); };
   unavailable.ondragleave = event => { event.stopPropagation(); if (!unavailable.contains(event.relatedTarget)) unavailable.classList.remove("drag-target"); };
   unavailable.ondrop = event => { event.preventDefault(); event.stopPropagation(); clearDragTargets(); markUnavailable(event.dataTransfer.getData("text/player-id")); };
-  unavailable.onclick = event => {
-    event.stopPropagation();
-    if (!selectedPlayerId || event.target.closest("[data-player-id]")) return;
-    markUnavailable(selectedPlayerId);
-  };
+}
+
+function handleLiveTap(event) {
+  const player = event.target.closest("[data-player-id]");
+  if (player) {
+    selectPlayer(player.dataset.playerId);
+    return;
+  }
+  const position = event.target.closest(".empty-field-slot[data-position]");
+  if (position && selectedPlayerId) {
+    handlePositionDrop(selectedPlayerId, position.dataset.position);
+    return;
+  }
+  if (!selectedPlayerId) return;
+  selectedPlayerId = null;
+  renderAt(clock?.elapsedMs || state.elapsedMs);
 }
 
 async function handlePositionDrop(playerId, position) {
@@ -1450,8 +1505,8 @@ async function handlePositionDrop(playerId, position) {
   if (onField || state.fieldCount < state.config.playersOnField) await movePlayer(playerId, position);
 }
 
-async function selectPlayer(playerId) {
-  if (Date.now() < suppressClickUntil) return;
+async function selectPlayer(playerId, directPointerTap = false) {
+  if (!directPointerTap && Date.now() < suppressClickUntil) return;
   if (!selectedPlayerId) {
     selectedPlayerId = playerId;
     renderAt(clock?.elapsedMs || state.elapsedMs);
@@ -1461,6 +1516,13 @@ async function selectPlayer(playerId) {
     selectedPlayerId = null;
     renderAt(clock?.elapsedMs || state.elapsedMs);
     openPlayerMenu(playerId);
+    return;
+  }
+  const selectedIsOnBench = state.bench?.some(player => player.playerId === selectedPlayerId);
+  const nextIsOnBench = state.bench?.some(player => player.playerId === playerId);
+  if (selectedIsOnBench && nextIsOnBench) {
+    selectedPlayerId = playerId;
+    renderAt(clock?.elapsedMs || state.elapsedMs);
     return;
   }
   const sourceId = selectedPlayerId;
@@ -1556,12 +1618,11 @@ async function movePlayers(moves) {
 
 function startPointerDrag(event) {
   if (event.pointerType === "mouse") return;
-  const card = event.currentTarget;
-  pointerDrag = { playerId: card.dataset.playerId, card, x: event.clientX, y: event.clientY, active: false, pointerId: event.pointerId };
-  card.setPointerCapture(event.pointerId);
-  card.addEventListener("pointermove", movePointerDrag);
-  card.addEventListener("pointerup", finishPointerDrag, { once: true });
-  card.addEventListener("pointercancel", cancelPointerDrag, { once: true });
+  const card = event.target.closest("[data-player-id]");
+  if (!card || !event.currentTarget.contains(card)) return;
+  const captureTarget = event.currentTarget;
+  pointerDrag = { playerId: card.dataset.playerId, card, captureTarget, x: event.clientX, y: event.clientY, active: false, pointerId: event.pointerId };
+  captureTarget.setPointerCapture(event.pointerId);
 }
 
 function movePointerDrag(event) {
@@ -1590,7 +1651,11 @@ function finishPointerDrag(event) {
   const wasActive = drag.active;
   const target = wasActive ? document.elementFromPoint(event.clientX, event.clientY) : null;
   cleanupPointerDrag();
-  if (!wasActive) return;
+  if (!wasActive) {
+    selectPlayer(drag.playerId, true);
+    suppressClickUntil = Date.now() + 400;
+    return;
+  }
   suppressClickUntil = Date.now() + 400;
   const playerTarget = target?.closest("[data-player-id]");
   if (playerTarget) handlePlayerDrop(drag.playerId, playerTarget.dataset.playerId);
@@ -1603,9 +1668,10 @@ function finishPointerDrag(event) {
 function cancelPointerDrag() { cleanupPointerDrag(); renderAt(clock?.elapsedMs || state.elapsedMs); }
 function cleanupPointerDrag() {
   if (!pointerDrag) return;
+  const { captureTarget, pointerId } = pointerDrag;
   pointerDrag.card.classList.remove("dragging");
-  pointerDrag.card.removeEventListener("pointermove", movePointerDrag);
   pointerDrag.ghost?.remove();
+  if (captureTarget?.hasPointerCapture(pointerId)) captureTarget.releasePointerCapture(pointerId);
   pointerDrag = null;
   document.body.classList.remove("magnet-drag-active");
   clearDragTargets();
@@ -1756,16 +1822,10 @@ function openDeletePlayer(playerId) {
 }
 
 function openMoreActions() {
-  const halfTime = state.currentPeriod === 1 && !isBetweenPeriods() && !state.completed ? `<button type="button" class="secondary" data-action="period">Mark half time</button>` : "";
-  openDialog("More", `<div class="dialog-fields action-list"><button type="button" class="secondary" data-action="undo">Undo last action</button>${halfTime}<button type="button" class="secondary" data-action="add-team">+ Add new team</button><button type="button" class="secondary danger-action" data-action="delete">Delete match</button></div>`, null, false);
+  openDialog("More", `<div class="dialog-fields action-list"><button type="button" class="secondary" data-action="undo">Undo last action</button><button type="button" class="secondary danger-action" data-action="delete">Delete match</button></div>`, null, false);
   document.querySelectorAll("[data-action]").forEach(button => button.addEventListener("click", () => {
-    $("#action-dialog").close(); ({ undo: undoLatest, period: endPeriod, "add-team": addTeamFromMatch, delete: openDeleteMatch })[button.dataset.action]();
+    $("#action-dialog").close(); ({ undo: undoLatest, delete: openDeleteMatch })[button.dataset.action]();
   }));
-}
-
-async function addTeamFromMatch() {
-  await returnToTeam();
-  openAddTeam();
 }
 
 function openDeleteMatch() {
@@ -1794,11 +1854,6 @@ async function returnToTeam() {
   $("#season-analysis-panel").classList.add("hidden");
   $("#analysis-method-panel").classList.add("hidden");
   await renderTeamDashboard();
-}
-
-async function endPeriod() {
-  if (!state.currentPeriod || isBetweenPeriods()) return;
-  clock.pause(); await append("period_ended", clock.elapsedMs, { period: state.currentPeriod });
 }
 
 function openNote() {
@@ -2007,7 +2062,7 @@ function shirtHtml(id, name) {
 function playerTimeHtml(ms, title) {
   const minutes = Math.floor(ms / 60_000);
   const label = `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
-  return `<span class="player-time" title="${escapeHtml(title)}" aria-label="${label}"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"></circle><path d="M10 5.5v5l3 2"></path></svg><span>${minutes}</span></span>`;
+  return `<span class="player-time" title="${escapeHtml(title)}" aria-label="${label}" data-player-minutes="${minutes}"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.5"></circle><path d="M10 5.5v5l3 2"></path></svg><span>${minutes}</span></span>`;
 }
 function normalizePlayerNumber(value) {
   const number = String(value ?? "").trim();

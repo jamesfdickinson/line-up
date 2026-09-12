@@ -22,11 +22,16 @@
   <main id="app">
     <section id="setup-view" class="view team-page">
       <div class="team-hero">
-        <div><div class="eyebrow">Team</div><input id="team-name-input" class="team-name-input" value="Team1" aria-label="Team name"></div>
-        <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams ▾</button></div>
+        <div><div class="eyebrow">Team</div><input id="team-name-input" class="team-name-input" value="" aria-label="Team name"></div>
+        <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams</button></div>
       </div>
-      <section id="no-team-panel" class="no-team-panel hidden"><h2>No teams yet</h2><p class="hint">Add a team to create players and matches.</p><button id="add-first-team" class="primary">+ Add team</button></section>
-      <section id="team-dashboard">
+      <section id="no-team-panel" class="no-team-panel team-manager-panel">
+        <h2 id="team-manager-title">No teams yet</h2>
+        <p id="team-manager-hint" class="hint">Add a team to create players and matches.</p>
+        <div id="team-manager-list" class="team-manager-list"></div>
+        <button id="add-first-team" class="primary">+ Add team</button>
+      </section>
+      <section id="team-dashboard" class="hidden">
         <div class="team-grid">
           <div class="matches-column">
             <div class="new-match-card">
@@ -87,7 +92,7 @@
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
           <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add goal for team" title="Add goal for team">+</button></div>
-          <div class="clock-block"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><div class="clock-actions"><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
+          <div class="clock-block"><div class="clock-line"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button></div><div class="clock-actions"><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
           <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add goal for opponent" title="Add goal for opponent">+</button><span id="opponent-name">OPPONENT</span></div>
         </div>
       </section>
