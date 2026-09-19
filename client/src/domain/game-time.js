@@ -2,7 +2,8 @@ import { activeTimeline } from "./match-event.js";
 
 export function displayedGameTime(events, trackingTimeMs, throughSequence = Infinity) {
   const adjustment = activeTimeline(events)
-    .filter(event => event.type === "clock_adjusted"
+    .filter(event => (event.type === "clock_adjusted" || event.type === "period_started")
+      && Number.isFinite(event.payload?.displayTimeMs)
       && (event.gameTimeMs < trackingTimeMs || (event.gameTimeMs === trackingTimeMs && event.sequence <= throughSequence)))
     .at(-1);
   if (!adjustment) return Math.max(0, trackingTimeMs);

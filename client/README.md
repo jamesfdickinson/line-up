@@ -33,6 +33,15 @@ The analysis page shows model status and the last-updated time but does not expo
 
 ## What is included
 
+### Live game controls
+
+- **Stage substitutions** on the Field tab keeps every player in place while drawing a line from each incoming player to the player or open position they will replace. Queue several lines, then use **Confirm** to apply the batch at one tracking time or **Cancel** to clear it. Selecting the same pairing again removes it; selecting a conflicting player or destination replaces the earlier line. Switching staging off discards the queue and restores immediate moves. Unconfirmed drafts are cleared when reopening or reloading a match; confirmed changes and game settings are saved.
+- Tap a player once to select them and again to open their menu. The menu supports **Edit name**, with Save and Cancel. Names update throughout the team views while IDs and recorded playing history remain stable.
+- From a bench player's menu, choose **Place on field / replace player**, then select any formation position or **Extra player 1** / **Extra player 2**. Choosing an occupied position moves its current player to the bench. Extra spots do not alter the formation. Drag an extra player onto an open area of the pitch or use **Position extra player** in their menu. Substitutions and **Move off field** work normally, including staging when enabled.
+- **Game settings** sets minutes per half and optionally aligns the displayed clock when entering the second half. Both options persist with the match. A 90-minute game uses 45-minute halves. Clock alignment leaves elapsed tracking time, player durations, pauses, timeline order, and reports unchanged. Timeline times and report graphs use tracking time.
+
+The regression suite includes `test/game-actions.test.js`. Browser checks in `scripts/verify-game.cjs` exercise mouse and touch interactions in isolated Edge profiles, using test data only. With Playwright resolvable (installed locally or through `NODE_PATH`), run `node scripts/verify-game.cjs` against a Vite server on port 4175. Set `TEST_URL` or `TEST_BROWSER` to override the URL or browser channel. Screenshots are written to the ignored `.verification/` directory.
+
 - Match, roster, lineup, position, goalkeeper, and rotation setup
 - One-step match creation with pregame configuration embedded on the game page
 - Drag-and-drop or tap-then-tap field/bench substitutions and position swaps

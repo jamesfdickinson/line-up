@@ -3,3 +3,4 @@ dist/
 .npm-cache/
 server-data/
 *.log
+.verification/

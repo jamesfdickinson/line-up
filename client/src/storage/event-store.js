@@ -17,8 +17,19 @@ export class EventStore {
   }
 
   async append(event) {
-    await this.#request("events", "readwrite", store => store.add(event));
-    await this.setMeta("activeMatchId", event.matchId);
+    return this.appendWithMeta(event);
+  }
+
+  async appendWithMeta(event, meta = []) {
+    await new Promise((resolve, reject) => {
+      const tx = this.db.transaction(["events", "meta"], "readwrite");
+      tx.objectStore("events").add(event);
+      tx.objectStore("meta").put({ key: "activeMatchId", value: event.matchId });
+      for (const record of meta) tx.objectStore("meta").put(record);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
     return event;
   }
 

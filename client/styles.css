@@ -522,13 +522,28 @@ body.match-open main{
   transform:scale(1.12);
   box-shadow:0 0 0 5px #fff8,0 0 0 9px #f4c84f,0 8px 14px #14382466;
 }
-.match-open .drag-ghost.player-token{
-  width:76px!important;
-  opacity:.96;
-  filter:drop-shadow(0 14px 10px #1b211a66);
-  transform:translate(-50%,-58%) rotate(-3deg) scale(1.08);
+.match-open .player-drag-circle{
+  width:56px!important;
+  height:56px!important;
+  margin:0!important;
+  padding:0!important;
+  display:grid!important;
+  place-items:center;
+  border:2px solid #245c41;
+  border-radius:50%;
+  clip-path:none!important;
+  background:#fffdf7!important;
+  color:#0b3321;
 }
-.match-open .drag-ghost .shirt-name{box-shadow:0 3px 7px #0004}
+.match-open .player-drag-circle.gk{border-color:#c9623b;background:#e78355!important;color:#4b2113}
+.match-open .player-drag-circle .shirt-number{font-size:15px}
+.match-open .drag-ghost.player-drag-circle{
+  width:56px!important;
+  opacity:.96;
+  box-shadow:0 10px 18px #1b211a66!important;
+  transform:translate(-50%,-50%) rotate(-3deg) scale(1.08);
+}
+.match-open .native-drag-image{position:fixed;left:-100px;top:-100px;z-index:1000}
 .magnet-drag-active{cursor:grabbing}
 
 .match-open .empty-field-slot{
@@ -948,4 +963,31 @@ dialog::backdrop{background:#1731267d}
   .team-hero{margin-top:8px}
   .new-match-card,.analysis-entry-card{border-radius:13px}
   .match-open #timeline-panel,.match-open #report-panel{border-radius:12px;padding:14px}
+}
+/* Live game options, substitution drafts, and free-position extra players. */
+.checkbox-label,.bench-stage-toggle{display:flex;align-items:center;gap:6px}
+.checkbox-label input[type=checkbox],.bench-stage-toggle input[type=checkbox]{width:16px;height:16px;flex-shrink:0;accent-color:#245c41}
+.bench-stage-toggle{color:#4f5d53;font-size:10px;font-weight:750;white-space:nowrap}
+.pending-substitutions{display:flex;align-items:center;gap:5px;padding:0}
+.pending-substitutions button{min-width:58px;min-height:28px;padding:3px 9px;border-radius:8px;font-size:9px}
+.pending-substitutions:not(.hidden)+.clear-field{display:none}
+.live-layout{position:relative}
+.substitution-lines{position:absolute;inset:0;z-index:7;overflow:visible;pointer-events:none}
+.substitution-line-shadow{stroke:#fff;stroke-width:8;stroke-linecap:round;opacity:.9}
+.substitution-line{stroke:#d98b18;stroke-width:4;stroke-linecap:round}
+.match-open .player-token,.empty-field-slot{position:relative}
+.match-open .field .extra-player{position:absolute;z-index:5;transform:translate(-50%,-50%)}
+.match-open .extra-player .player-token{min-height:0}
+.match-open .extra-player .magnet-position{display:block;background:#fff4ce;color:#493608;padding:2px 5px;border-radius:5px}
+.match-open #live-panel:not(.hidden){display:flex;flex-direction:column;overflow-y:auto}
+.pending-substitutions{flex:0 0 auto}
+.match-open .live-layout{height:auto;flex:1 0 360px;min-height:360px}
+@media(max-width:600px) and (orientation:portrait){
+  .match-open #live-panel:not(.hidden){display:flex;flex-direction:column;overflow-y:auto}
+  .pending-substitutions{flex:0 0 auto}
+  .match-open .live-layout{height:auto;flex:1 0 400px;min-height:400px}
+  .pending-substitutions{gap:3px}
+  .pending-substitutions button{min-width:48px;min-height:24px;padding:2px 6px;font-size:8px}
+  .bench-stage-toggle{gap:3px;font-size:8px}
+  .bench-stage-toggle input[type=checkbox]{width:14px;height:14px}
 }

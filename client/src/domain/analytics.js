@@ -42,7 +42,7 @@ const emptyFormation = name => ({
   name, minutesMs: 0, goalsFor: 0, goalsAgainst: 0, attemptsFor: 0, attemptsAgainst: 0,
   completedAppearances: 0, wins: 0, finalMargin: 0
 });
-const positionRank = position => position === "gk" ? "Keeper" : position.startsWith("forward_") ? "Forward" : position.startsWith("mid_") ? "Midfield" : "Defense";
+const positionRank = position => position.startsWith("extra_") ? "Unassigned" : position === "gk" ? "Keeper" : position.startsWith("forward_") ? "Forward" : position.startsWith("mid_") ? "Midfield" : "Defense";
 const PLAYER_TIME_BUCKETS = Object.freeze([
   { key: "opening", label: "First 15 on field", startMs: 0, endMs: 15 * 60_000 },
   { key: "middle", label: "Next 15 on field", startMs: 15 * 60_000, endMs: 30 * 60_000 },

@@ -6,7 +6,6 @@
   <meta name="theme-color" content="#173f2c">
   <title>LineUp JD</title>
   <link rel="manifest" href="manifest.webmanifest">
-  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="app-header">
@@ -99,6 +98,7 @@
 
       <section id="live-panel" class="tab-panel">
         <div class="live-layout">
+          <svg id="substitution-lines" class="substitution-lines" aria-hidden="true"></svg>
           <section class="field-section">
             <div class="pitch-wrap">
               <div class="clipboard-guide"><strong>Lineup board</strong><span id="magnet-hint" aria-live="polite">Drag a magnet, or tap it then tap its destination</span></div>
@@ -108,7 +108,7 @@
             </div>
           </section>
           <aside>
-            <div class="section-heading"><div><h2>Bench</h2></div><div class="off-field-actions"><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
+            <div class="section-heading bench-heading"><div><h2>Bench</h2><label class="bench-stage-toggle"><input id="stage-substitutions" type="checkbox"> <span>Stage substitutions</span></label></div><div class="off-field-actions"><div id="pending-substitutions" class="pending-substitutions hidden" aria-live="polite"></div><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
             <div id="bench" class="bench"></div>
           </aside>
         </div>
@@ -116,6 +116,7 @@
       </section>
 
       <section id="timeline-panel" class="tab-panel hidden">
+        <p class="hint">Timeline times use elapsed tracking time, unaffected by display-clock adjustments.</p>
         <div class="panel-head"><div><div class="eyebrow">Source of truth</div><h2>Match timeline</h2></div><button id="add-note" class="secondary">+ Add event</button></div>
         <div id="timeline" class="timeline"></div>
       </section>

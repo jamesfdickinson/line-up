@@ -64,7 +64,25 @@ export class LineupProjector {
           for (const id of Object.values(state.field)) if (players[id]) players[id].lastEnteredAt = event.gameTimeMs;
           stintStart = event.gameTimeMs;
           break;
-        case "period_started": state.currentPeriod = p.period; state.periodRunning = true; break;
+        case "period_started": state.currentPeriod = p.period; state.periodRunning = p.running !== false; break;
+        case "match_settings_changed":
+          for (const key of ["stageSubstitutions", "syncHalfClock"]) if (typeof p[key] === "boolean") config[key] = p[key];
+          if (Number.isFinite(p.periodMinutes) && p.periodMinutes > 0) config.periodMinutes = p.periodMinutes;
+          break;
+        case "extra_positioned":
+          if (["extra_1", "extra_2"].includes(p.position) && Number.isFinite(p.x) && Number.isFinite(p.y)) {
+            config.extraLocations ||= {};
+            config.extraLocations[p.position] = { x: Math.max(10, Math.min(90, p.x)), y: Math.max(12, Math.min(88, p.y)) };
+          }
+          break;
+        case "player_renamed": {
+          const name = typeof p.name === "string" ? p.name.trim() : "";
+          if (!name || !players[p.playerId]) { state.errors.push("Invalid player name."); break; }
+          players[p.playerId].name = name;
+          const player = config.roster.find(item => item.playerId === p.playerId);
+          if (player) player.name = name;
+          break;
+        }
         case "clock_resumed": state.periodRunning = true; break;
         case "clock_paused": state.periodRunning = false; break;
         case "period_ended": state.periodRunning = false; break;
@@ -136,7 +154,7 @@ export class LineupProjector {
         case "note_added": state.notes.push(event); break;
         case "match_completed": state.completed = true; state.periodRunning = false; break;
       }
-      if (Object.keys(state.field).length > config.playersOnField) state.errors.push("Too many players on the field.");
+      if (Object.keys(state.field).length > config.playersOnField + 2) state.errors.push("Too many players on the field.");
     }
     closeInterval(limit);
     closeStint(limit);
