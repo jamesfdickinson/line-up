@@ -1,5 +1,6 @@
 import { MatchEvent, activeTimeline, isCorrection } from "./domain/match-event.js";
 import { MatchClock } from "./domain/match-clock.js";
+import { replayMoments, replayMomentAt } from "./domain/replay.js";
 import { LineupProjector } from "./domain/lineup-projector.js";
 import { EventStore } from "./storage/event-store.js";
 import { exportMatchJson, downloadFile } from "./domain/exporter.js";
@@ -16,7 +17,6 @@ import { createSampleDataset, sampleDataOptions } from "./domain/sample-data.js"
 import { createFullBackup, mergeEventHistories, parseFullBackup } from "./domain/backup.js";
 import { splitPlayerNames } from "./domain/player-entry.js";
 import { EXTRA_POSITIONS, isFieldPosition, validateMoves, stageMoves, validPendingMoves, periodStartPayload, normalizedPlayerName } from "./domain/game-actions.js";
-import "../styles.css";
 
 const FORMATIONS = {
   3: [{ name: "1-1", shape: [1, 0, 1] }],
@@ -162,6 +162,9 @@ let events = [];
 let state = projector.empty();
 let matchId = null;
 let clock = null;
+let replayTimeMs = null;
+let scrubberOpen = false;
+let scrubberAutoEligible = false;
 let toastTimer = null;
 let selectedPlayerId = null;
 let pendingSubstitutions = [];
@@ -176,7 +179,8 @@ let teamManagerOpen = false;
 let substitutionHighlightTimer = null;
 let recentSubstitutionState = { on: new Set(), off: new Set(), nextExpiryMs: null };
 
-document.addEventListener("DOMContentLoaded", init);
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
+else init();
 
 async function init() {
   bindStaticEvents();
@@ -223,6 +227,32 @@ function bindStaticEvents() {
   $("#back-to-team").addEventListener("click", returnFromAnalysis);
   $("#back-to-analysis").addEventListener("click", () => { $("#analysis-method-panel").classList.add("hidden"); $("#season-analysis-panel").classList.remove("hidden"); window.scrollTo(0, 0); });
   $("#team-matches").addEventListener("click", event => { const button = event.target.closest("[data-open-match]"); if (button) loadMatch(button.dataset.openMatch); });
+  $("#scrub-toggle").addEventListener("click", () => {
+    scrubberOpen = !scrubberOpen;
+    if (!scrubberOpen) replayTimeMs = null;
+    selectedPlayerId = null;
+    renderAt(clock.elapsedMs);
+  });
+  $("#scrub-range").addEventListener("input", event => {
+    const time = Number(event.target.value);
+    replayTimeMs = time >= Number(event.target.max) ? null : time;
+    selectedPlayerId = null;
+    renderAt(clock.elapsedMs);
+  });
+  $("#scrub-live").addEventListener("click", () => {
+    replayTimeMs = null;
+    renderAt(clock.elapsedMs);
+  });
+  $("#scrub-markers").addEventListener("click", event => {
+    const marker = event.target.closest("[data-replay-time]");
+    if (marker) seekReplay(Number(marker.dataset.replayTime));
+  });
+  $("#scrub-goals").addEventListener("click", event => {
+    const goal = event.target.closest("[data-goal-time]");
+    if (goal) seekReplay(Number(goal.dataset.goalTime));
+  });
+  $("#scrub-prev").addEventListener("click", () => stepReplay(-1));
+  $("#scrub-next").addEventListener("click", () => stepReplay(1));
   $("#clock-button").addEventListener("click", openClockAdjust);
   $("#half-toggle").addEventListener("click", toggleHalf);
   $("#match-control").addEventListener("click", toggleClock);
@@ -1264,7 +1294,8 @@ function formatSigned(value, digits = 0) {
 }
 
 function projectMatch(matchEvents, elapsedMs) {
-  const projected = projector.project(matchEvents, elapsedMs);
+  // Events are stored at whole milliseconds; use the same precision at the live edge.
+  const projected = projector.project(matchEvents, Number.isFinite(elapsedMs) ? Math.round(elapsedMs) : elapsedMs);
   const roster = teams.find(item => item.teamId === projected.config?.teamId)?.players || [];
   for (const player of roster) {
     if (projected.players[player.playerId]) projected.players[player.playerId].name = player.name;
@@ -1285,6 +1316,9 @@ function restoreMatch() {
 }
 
 function showMatch() {
+  replayTimeMs = null;
+  scrubberOpen = false;
+  scrubberAutoEligible = false;
   pendingSubstitutions = [];
   selectedPlayerId = null;
   window.scrollTo(0, 0);
@@ -1312,18 +1346,150 @@ function renderAt(elapsedMs) {
   pendingSubstitutions = state.config.stageSubstitutions && !state.completed ? validPendingMoves(pendingSubstitutions, state) : [];
   recentSubstitutionState = recentSubstitutionChanges(state.timeline, Date.now());
   scheduleSubstitutionHighlightRefresh();
+  // Render history without replacing the live state used by game actions.
+  const liveState = state;
+  if (replayTimeMs !== null) {
+    state = projectMatch(events, replayTimeMs);
+    recentSubstitutionState = { on: new Set(), off: new Set(), nextExpiryMs: null };
+  }
   renderScoreboard();
-  if (pointerDrag || nativeDragging) return;
+  renderScrubber(elapsedMs);
+  if (pointerDrag || nativeDragging) { state = liveState; return; }
   renderGameOptions(); renderField(); renderBench(); renderUnavailable(); bindPlayerInteractions(); renderSubstitutionLines();
+  renderReplayHighlights();
   if (!$("#timeline-panel").classList.contains("hidden")) renderTimeline();
   if (!$("#report-panel").classList.contains("hidden")) renderReport();
+  state = liveState;
 }
 
 function renderClockTick(elapsedMs) {
   if (!matchId) return;
   state = projectMatch(events, elapsedMs);
+  if (replayTimeMs !== null) { renderScrubber(elapsedMs); return; }
   renderScoreboard();
+  renderScrubber(elapsedMs);
   refreshPlayerTimes();
+}
+
+function renderScrubber(elapsedMs) {
+  const onField = !$("#live-panel").classList.contains("hidden");
+  const autoEligible = onField && !clock?.running && elapsedMs > 0 && replayMoments(events).length > 0;
+  // Open on entering a paused game, but let the coach hide it until the next pause.
+  if (autoEligible && !scrubberAutoEligible) scrubberOpen = true;
+  scrubberAutoEligible = autoEligible;
+  const reviewing = replayTimeMs !== null;
+  $("#game-scrubber").classList.toggle("hidden", !scrubberOpen || !onField);
+  $("#scrub-toggle").setAttribute("aria-expanded", String(scrubberOpen));
+  const label = `${scrubberOpen ? "Hide" : "Show"} game replay`;
+  $("#scrub-toggle").setAttribute("aria-label", label);
+  $("#scrub-toggle").title = label;
+  const range = $("#scrub-range");
+  range.max = Math.floor(elapsedMs / 1000) * 1000;
+  range.value = reviewing ? replayTimeMs : Number(range.max);
+  range.disabled = elapsedMs < 1000;
+  range.setAttribute("aria-valuetext", `${formatClock(Number(range.value))} elapsed tracking time${reviewing ? ", replay" : ""}`);
+  $("#scrub-time").textContent = `${reviewing ? "Replay " : ""}${formatClock(Number(range.value))}`;
+  $("#scrub-end").textContent = formatClock(elapsedMs);
+  $("#scrub-live").textContent = reviewing ? "Back to live" : "Live";
+  $("#scrub-live").disabled = !reviewing;
+  for (const selector of ["#live-panel .pitch-wrap", "#live-panel aside", "#undo-toast"]) $(selector).inert = reviewing;
+  $("#live-panel").classList.toggle("replaying", reviewing);
+  $("#field-scoreboard .score-row").classList.toggle("replaying", reviewing);
+  for (const selector of ["#clock-button", "#match-control", "#score-for-button", "#score-against-button", "#more-actions"]) $(selector).disabled = reviewing;
+  $("#half-toggle").disabled = reviewing || state.completed;
+  if (reviewing) {
+    $("#live-status").textContent = "REPLAY";
+    $("#match-control").classList.remove("kickoff-pulse");
+  }
+  if (scrubberOpen) renderReplayMoments(elapsedMs);
+}
+
+function seekReplay(timeMs) {
+  replayTimeMs = timeMs;
+  selectedPlayerId = null;
+  renderAt(clock.elapsedMs);
+}
+
+function stepReplay(direction) {
+  const moments = replayMoments(events);
+  const time = replayTimeMs ?? clock.elapsedMs;
+  const moment = direction < 0 ? moments.findLast(item => item.timeMs < time) : moments.find(item => item.timeMs > time);
+  if (moment) seekReplay(moment.timeMs);
+}
+
+function replaySymbol(moment) {
+  if (moment.events.some(event => event.type === "goal_against") && moment.events.some(event => event.type === "goal_for")) return "±⚽";
+  if (moment.events.some(event => event.type === "goal_against")) return "−⚽";
+  if (moment.events.some(event => event.type === "goal_for")) return "+⚽";
+  if (moment.events.some(event => event.type === "player_moved")) return "⇄";
+  return "•";
+}
+
+function replayEventText(event) {
+  if (event.type === "starting_lineup_confirmed") return "Starting lineup";
+  if (event.type === "player_moved") return (event.payload.moves || []).map(move => `${nameOf(move.playerId)}: ${moveDestinationName(move.from)} → ${moveDestinationName(move.to)}`).join(" · ");
+  return eventLabel(event);
+}
+
+function renderReplayMoments(elapsedMs) {
+  const moments = replayMoments(events);
+  const time = replayTimeMs ?? elapsedMs;
+  const current = replayMomentAt(moments, time);
+  const markers = moments.map(moment => {
+    const label = `${formatClock(moment.timeMs)} · ${moment.events.map(replayEventText).join(" · ")}`;
+    const kind = moment.events.some(event => event.type === "goal_against") ? "against" : moment.events.some(event => event.type === "goal_for") ? "goal" : "change";
+    return `<button type="button" class="scrub-marker ${kind}" style="left:${Math.min(100, moment.timeMs / Math.max(1, elapsedMs) * 100)}%" data-replay-time="${moment.timeMs}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${current === moment}">${replaySymbol(moment)}</button>`;
+  }).join("");
+  // Preserve keyboard focus on a marker when the live timer ticks.
+  const rail = $("#scrub-markers");
+  if (rail.innerHTML !== markers) {
+    const focusedTime = rail.contains(document.activeElement) ? document.activeElement.dataset.replayTime : null;
+    rail.innerHTML = markers;
+    if (focusedTime !== null) [...rail.children].find(marker => marker.dataset.replayTime === focusedTime)?.focus({ preventScroll: true });
+  }
+  // Keep every goal visible, including goals at the same or nearby times.
+  const goals = moments.flatMap(moment => moment.events.filter(event => ["goal_for", "goal_against"].includes(event.type)));
+  const goalHtml = goals.length
+    ? `<span class="scrub-goals-label">Goals</span>${goals.map(event => {
+      const against = event.type === "goal_against";
+      const side = against ? "Against" : "For";
+      const label = `${side} · ${formatClock(event.gameTimeMs)} · ${replayEventText(event)}`;
+      return `<button type="button" class="scrub-goal ${against ? "against" : "for"}" data-goal-id="${escapeHtml(event.eventId)}" data-goal-time="${event.gameTimeMs}" aria-label="${escapeHtml(label)}" title="${escapeHtml(label)}" aria-pressed="${replayTimeMs !== null && current?.timeMs === event.gameTimeMs}"><span aria-hidden="true">${against ? "−" : "+"}⚽</span> ${side} <time>${formatClock(event.gameTimeMs)}</time></button>`;
+    }).join("")}`
+    : `<span class="scrub-goals-label">No goals recorded</span>`;
+  const goalList = $("#scrub-goals");
+  if (goalList.innerHTML !== goalHtml) {
+    const focusedId = goalList.contains(document.activeElement) ? document.activeElement.dataset.goalId : null;
+    goalList.innerHTML = goalHtml;
+    if (focusedId) [...goalList.children].find(goal => goal.dataset.goalId === focusedId)?.focus({ preventScroll: true });
+  }
+  $("#scrub-prev").disabled = !moments.some(moment => moment.timeMs < time);
+  $("#scrub-next").disabled = !moments.some(moment => moment.timeMs > time);
+  const detail = current
+    ? `<strong>${formatClock(current.timeMs)} · ${replayTimeMs === null ? "Latest recorded moment" : "Last change at this point"}</strong>${current.events.map(event => `<span>${escapeHtml(replayEventText(event))}</span>`).join("")}`
+    : "<strong>Start of game</strong><span>No recorded changes yet</span>";
+  if ($("#scrub-event").innerHTML !== detail) $("#scrub-event").innerHTML = detail;
+}
+
+function renderReplayHighlights() {
+  if (replayTimeMs === null) return;
+  const moment = replayMomentAt(replayMoments(events), replayTimeMs);
+  if (!moment) return;
+  const badges = new Map();
+  for (const event of moment.events) {
+    for (const move of event.payload.moves || []) badges.set(move.playerId, isFieldPosition(move.to) ? (isFieldPosition(move.from) ? "Moved" : "IN") : "OUT");
+    if (["goal_for", "assist_for", "goal_attempt"].includes(event.type) && event.payload.playerId) badges.set(event.payload.playerId, event.type === "goal_for" ? "GOAL" : event.type === "assist_for" ? "Assist" : "Attempt");
+  }
+  for (const [playerId, label] of badges) {
+    const card = playerElement(playerId);
+    if (!card) continue;
+    card.classList.add("replay-highlight");
+    card.dataset.replayBadge = label;
+  }
+  for (const event of moment.events) {
+    if (event.type === "goal_for") $("#field .opponent-goal")?.classList.add("replay-goal");
+    if (event.type === "goal_against") $("#field .keeper-goal")?.classList.add("replay-goal");
+  }
 }
 
 function refreshPlayerTimes() {
@@ -2226,6 +2392,11 @@ function goalPlayerGroupsHtml(timeline, goals) {
 function renderReport() { renderReportDetails(); }
 
 function switchTab(view) {
+  if (view !== "live" && (scrubberOpen || replayTimeMs !== null)) {
+    scrubberOpen = false;
+    replayTimeMs = null;
+    renderAt(clock.elapsedMs);
+  }
   document.querySelectorAll(".tab").forEach(tab => {
     const active = tab.dataset.view === view;
     tab.classList.toggle("active", active);
@@ -2233,6 +2404,7 @@ function switchTab(view) {
   });
   ["live", "timeline", "report"].forEach(name => $("#" + name + "-panel").classList.toggle("hidden", name !== view));
   $("#field-scoreboard").classList.toggle("hidden", view !== "live");
+  if (clock && state.config) renderScrubber(clock.elapsedMs);
   if (view === "live") requestAnimationFrame(renderSubstitutionLines);
   if (view === "timeline") renderTimeline(); if (view === "report") renderReport();
 }

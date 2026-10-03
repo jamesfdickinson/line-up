@@ -991,3 +991,46 @@ dialog::backdrop{background:#1731267d}
   .bench-stage-toggle{gap:3px;font-size:8px}
   .bench-stage-toggle input[type=checkbox]{width:14px;height:14px}
 }
+/* Compact, optional game replay controls. */
+.scrub-toggle{display:grid;place-items:center;width:32px;min-width:32px;height:32px;padding:5px;border:1px solid #c9c2b5;border-radius:50%;background:#f3efe6;color:#245c41}
+.scrub-toggle svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.scrub-toggle[aria-expanded=true]{background:#dce9df;border-color:#245c41}
+.game-scrubber{display:flex;align-items:center;gap:8px;width:min(820px,100%);margin:0 auto 6px;padding:4px 8px;flex:0 0 auto;box-sizing:border-box;background:#f3efe6;border:1px solid #c9c2b5;border-radius:8px;color:#245c41;font-size:11px;font-variant-numeric:tabular-nums}
+.game-scrubber input[type=range]{flex:1;min-width:0;width:auto;height:28px;margin:0;padding:0;accent-color:#245c41;cursor:pointer}
+.game-scrubber output,.game-scrubber span{white-space:nowrap}
+.game-scrubber button{min-height:30px;padding:3px 8px;border:1px solid #c9c2b5;border-radius:6px;background:#fffdf7;color:#245c41;font-size:11px;white-space:nowrap}
+.game-scrubber button:disabled{opacity:.65;cursor:default}
+.replaying #pending-substitutions,.replaying #substitution-lines,.replaying #undo-toast{visibility:hidden}
+.replaying .clipboard-guide span{visibility:hidden}
+.replaying .clipboard-guide strong::after{content:" · Replay"}
+.score-row.replaying button:disabled{cursor:default;opacity:.65}
+/* Recorded moments stay inside the collapsible replay panel. */
+.game-scrubber{display:block;padding:5px 9px}
+.scrub-controls{display:flex;align-items:center;gap:8px}
+.scrub-track{flex:1;min-width:0;padding-bottom:22px;position:relative}
+.game-scrubber .scrub-track input{display:block;width:100%}
+.scrub-markers{position:absolute;left:9px;right:9px;bottom:0;height:24px;border-top:1px solid #c9c2b5}
+.game-scrubber .scrub-marker{position:absolute;top:1px;transform:translateX(-50%);display:grid;place-items:center;width:24px;min-height:22px;padding:0;border:0;background:#f3efe6;color:#426c52;font-size:15px;line-height:1}
+.game-scrubber .scrub-marker.goal{color:#245c41}.game-scrubber .scrub-marker.against{color:#a9473d;background:#f7eae7}
+.game-scrubber .scrub-marker[aria-pressed=true]{outline:2px solid #245c41;z-index:1;background:#dce9df}
+.game-scrubber .scrub-marker.goal,.game-scrubber .scrub-marker.against{width:30px;font-size:12px;font-weight:900;z-index:2}
+.scrub-goals{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:6px 0 2px}
+.scrub-goals-label{font-size:10px;font-weight:800;color:#677167;margin-right:2px}
+.game-scrubber .scrub-goal{display:flex;align-items:center;gap:4px;min-height:32px;padding:4px 7px;font-weight:800;background:#e0eee3;border-color:#80a58a;color:#1b5736}
+.game-scrubber .scrub-goal.against{background:#f8e3df;border-color:#cf9388;color:#8c3328}
+.game-scrubber .scrub-goal time{font-variant-numeric:tabular-nums;font-weight:600}
+.game-scrubber .scrub-goal[aria-pressed=true]{outline:2px solid currentColor;outline-offset:1px}
+.scrub-event-nav{display:flex;align-items:center;gap:8px;border-top:1px solid #d5d0c4;margin-top:5px;padding-top:5px}
+.scrub-event-nav>button{flex:0 0 30px;font-size:22px;min-height:36px;padding:0}
+#scrub-event{flex:1;min-width:0;line-height:1.45;max-height:100px;overflow:auto}
+#scrub-event strong{display:block;font-size:10px;color:#677167}
+#scrub-event span{display:block;white-space:normal;overflow-wrap:anywhere;font-size:12px}
+.replaying .replay-highlight .shirt-icon{outline:3px solid #ffc94a;outline-offset:3px}
+.replay-highlight::after{content:attr(data-replay-badge);position:absolute;z-index:8;top:0;right:0;padding:2px 5px;border-radius:4px;background:#ffe19a;color:#493608;font-size:10px;font-weight:900;box-shadow:0 1px 4px #0004}
+.replaying .magnet-position{display:block!important}
+#field .pitch-goal.replay-goal{box-shadow:0 0 0 4px #ffc94a,0 0 20px #ffc94a;background-color:#ffe19a88}
+@media(max-width:600px){.scrub-controls{gap:5px}.game-scrubber{font-size:10px}.game-scrubber button{font-size:10px}.game-scrubber .scrub-marker{font-size:14px}.scrub-event-nav>button{font-size:22px}#scrub-event span{font-size:11px}}
+/* Place replay directly below the pitch, above the bench on phones. */
+.match-open .field-section{display:flex;flex-direction:column;min-width:0;gap:8px}
+.match-open .field-section>.pitch-wrap{flex:1 1 auto;min-height:260px;height:auto}
+.match-open .field-section>.game-scrubber{width:100%;max-width:none;margin:0;flex:0 0 auto}

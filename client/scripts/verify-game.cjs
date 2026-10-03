@@ -6,10 +6,10 @@ const path = require("node:path");
 const url = process.env.TEST_URL || "http://127.0.0.1:4175";
 const artifacts = path.join(__dirname, "../.verification");
 
-async function seed(page, minutes = 10, size = 3) {
+async function seed(page, minutes = 10, size = 3, replay = false) {
   await page.goto(url);
   await page.waitForFunction(() => document.querySelector('#no-team-panel:not(.hidden), [data-open-match]'));
-  await page.evaluate(async ({ minutes, size }) => {
+  await page.evaluate(async ({ minutes, size, replay }) => {
     const { EventStore } = await import("/src/storage/event-store.js");
     const store = await new EventStore().open();
     const roster = Array.from({ length: size + 5 }, (_, index) => ({ playerId: `p${index + 1}`, name: `Player ${index + 1}`, status: "available" }));
@@ -20,13 +20,18 @@ async function seed(page, minutes = 10, size = 3) {
       make(1, "match_created", 0, config),
       make(2, "starting_lineup_confirmed", 0, { assignments: positions.map((position, index) => ({ position, playerId: `p${index + 1}` })), goalkeeperId: `p${size}` }),
       make(3, "period_started", 0, { period: 1 }),
-      make(4, "clock_paused", minutes * 60_000)
+      ...(replay ? [
+        make(4, "player_moved", 180000, { moves: [{ playerId: "p1", from: positions[0], to: "off_field" }, { playerId: "p4", from: "off_field", to: positions[0] }] }),
+        make(5, "goal_for", 300000, { playerId: "p4" }),
+        make(6, "goal_against", 420000)
+      ] : []),
+      make(replay ? 7 : 4, "clock_paused", minutes * 60_000)
     ] });
     store.db.close();
-  }, { minutes, size });
+  }, { minutes, size, replay });
   await page.reload();
   await page.locator('[data-open-match="test-game"]').click();
-  await page.locator('#field [data-player-id="p1"]').waitFor();
+  await page.locator(`#field [data-player-id="${replay ? "p4" : "p1"}"]`).waitFor();
 }
 
 async function stored(page) {
@@ -75,6 +80,82 @@ async function run(touch) {
     }
   };
   try {
+    await seed(page, 0);
+    assert.equal(await page.locator('#game-scrubber').isVisible(), false, 'No auto-open before time has elapsed');
+    await seed(page);
+    assert.equal(await page.locator('#game-scrubber').isVisible(), true, 'Paused games expose the scrubber automatically');
+    await press('#scrub-toggle');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), false, 'The automatic scrubber can still be collapsed');
+    await press('#scrub-toggle');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), true);
+    const pitchRect = await page.locator('#live-panel .pitch-wrap').boundingBox();
+    const scrubRect = await page.locator('#game-scrubber').boundingBox();
+    assert.ok(scrubRect.y >= pitchRect.y + pitchRect.height, 'Scrubber belongs directly below the field');
+    const beforeReplay = (await stored(page)).events;
+    await page.locator('#scrub-range').evaluate(input => {
+      input.value = '120000';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    assert.equal(await page.locator('#clock-button').textContent(), '02:00');
+    assert.equal(await page.locator('#live-panel .pitch-wrap').evaluate(panel => panel.inert), true);
+    assert.equal(await page.locator('#score-for-button').isDisabled(), true);
+    assert.equal(await page.locator('#scrub-live').textContent(), 'Back to live');
+    assert.deepEqual((await stored(page)).events, beforeReplay);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+    await page.screenshot({ path: path.join(artifacts, `${touch ? "phone" : "desktop"}-replay.png`), fullPage: true });
+    await press('#scrub-live');
+    assert.equal(await page.locator('#clock-button').textContent(), '10:00');
+    assert.equal(await page.locator('#live-panel .pitch-wrap').evaluate(panel => panel.inert), false);
+    await press('#scrub-toggle');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), false);
+    await page.locator('#match-control').click({ force: true });
+    await press('#scrub-toggle');
+    await page.locator('#scrub-range').evaluate(input => {
+      input.value = '120000';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    const replayEnd = Number(await page.locator('#scrub-range').getAttribute('max'));
+    await page.waitForFunction(end => Number(document.querySelector('#scrub-range').max) > end + 300, replayEnd);
+    assert.equal(await page.locator('#clock-button').textContent(), '02:00', 'Replay must hold while the live timer advances');
+    await press('#scrub-toggle');
+    assert.equal(await page.locator('#live-panel .pitch-wrap').evaluate(panel => panel.inert), false);
+    assert.equal(await page.locator('#match-control').getAttribute('aria-label'), 'Pause timer');
+    await press('#match-control');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), true, 'Pausing again reopens the scrubber');
+    await seed(page, 10, 3, true);
+    assert.equal(await page.locator('#game-scrubber').isVisible(), true);
+    assert.equal(await page.locator('#scrub-goals .scrub-goal').count(), 2, 'All goals remain visible together');
+    assert.match(await page.locator('#scrub-goals .for').textContent(), /For\s+05:00/);
+    assert.match(await page.locator('#scrub-goals .against').textContent(), /Against\s+07:00/);
+    await press('#scrub-goals .against');
+    assert.equal(await page.locator('#clock-button').textContent(), '07:00', 'Goal indicators seek to their recorded time');
+    assert.equal(await page.locator('#score-against').textContent(), '1');
+    assert.equal(await page.locator('#scrub-goals .for').isVisible(), true, 'Earlier goals stay visible during replay');
+    await press('#scrub-live');
+    await press('[data-view="timeline"]');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), false);
+    await press('[data-view="live"]');
+    assert.equal(await page.locator('#game-scrubber').isVisible(), true);
+    await press('[data-replay-time="180000"]');
+    assert.equal(await page.locator('[data-replay-time="180000"]').getAttribute('aria-pressed'), 'true');
+    assert.equal(await page.locator('[data-replay-time="420000"]').getAttribute('aria-pressed'), 'false');
+    assert.equal(await page.locator('#field [data-player-id="p4"]').getAttribute('data-replay-badge'), 'IN');
+    assert.equal(await page.locator('#bench [data-player-id="p1"]').getAttribute('data-replay-badge'), 'OUT');
+    assert.match(await page.locator('#scrub-event').textContent(), /Player 4: Off field →/);
+    assert.equal(await page.locator('#score-for').textContent(), '0');
+    await page.screenshot({ path: path.join(artifacts, `${touch ? "phone" : "desktop"}-replay-move.png`), fullPage: true });
+    await press('#scrub-next');
+    assert.equal(await page.locator('#score-for').textContent(), '1');
+    assert.equal(await page.locator('#field [data-player-id="p4"]').getAttribute('data-replay-badge'), 'GOAL');
+    assert.equal(await page.locator('#field .opponent-goal.replay-goal').count(), 1);
+    await press('#scrub-prev');
+    await press('#scrub-prev');
+    assert.equal(await page.locator('#field [data-player-id="p1"]').count(), 1);
+    assert.equal(await page.locator('#score-for').textContent(), '0');
+    await press('#scrub-live');
+    assert.equal(await page.locator('#score-against').textContent(), '1');
+    assert.equal(await page.locator('.replay-highlight').count(), 0);
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
     await seed(page);
     assert.equal(await page.locator('#game-settings').count(), 0);
     await page.locator('#more-actions').click();

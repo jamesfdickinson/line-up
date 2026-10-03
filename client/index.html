@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#173f2c">
   <title>LineUp JD</title>
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="app-header">
@@ -24,7 +25,7 @@
         <div><div class="eyebrow">Team</div><input id="team-name-input" class="team-name-input" value="" aria-label="Team name"></div>
         <div class="team-hero-actions"><button id="team-menu" class="secondary">Teams</button></div>
       </div>
-      <section id="no-team-panel" class="no-team-panel team-manager-panel">
+      <section id="no-team-panel" class="no-team-panel team-manager-panel hidden">
         <h2 id="team-manager-title">No teams yet</h2>
         <p id="team-manager-hint" class="hint">Add a team to create players and matches.</p>
         <div id="team-manager-list" class="team-manager-list"></div>
@@ -91,7 +92,7 @@
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
           <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add goal for team" title="Add goal for team">+</button></div>
-          <div class="clock-block"><div class="clock-line"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button></div><div class="clock-actions"><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
+          <div class="clock-block"><div class="clock-line"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button></div><div class="clock-actions"><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button><button id="scrub-toggle" class="scrub-toggle" type="button" aria-label="Show game replay" title="Show game replay" aria-expanded="false" aria-controls="game-scrubber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v12M20 6v12M4 12h16M9 8v8"/></svg></button></div></div>
           <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add goal for opponent" title="Add goal for opponent">+</button><span id="opponent-name">OPPONENT</span></div>
         </div>
       </section>
@@ -106,6 +107,19 @@
               <button id="layout-button" class="layout-button" type="button">Formation</button>
               <span id="field-count" class="field-count-overlay"></span>
             </div>
+      <div id="game-scrubber" class="game-scrubber hidden" role="region" aria-label="Game replay">
+        <div class="scrub-controls">
+        <output id="scrub-time" for="scrub-range">00:00</output>
+        <div class="scrub-track">
+        <input id="scrub-range" type="range" min="0" max="0" value="0" step="1000" aria-label="Replay tracking time">
+        <div id="scrub-markers" class="scrub-markers" aria-label="Recorded moments"></div>
+        </div>
+        <span id="scrub-end">00:00</span>
+        <button id="scrub-live" type="button">Live</button>
+        </div>
+        <div id="scrub-goals" class="scrub-goals" role="group" aria-label="All recorded goals"></div>
+        <div class="scrub-event-nav"><button id="scrub-prev" type="button" aria-label="Previous recorded moment">‹</button><div id="scrub-event" aria-live="polite"></div><button id="scrub-next" type="button" aria-label="Next recorded moment">›</button></div>
+      </div>
           </section>
           <aside>
             <div class="section-heading bench-heading"><div><h2>Bench</h2><label class="bench-stage-toggle"><input id="stage-substitutions" type="checkbox"> <span>Stage substitutions</span></label></div><div class="off-field-actions"><div id="pending-substitutions" class="pending-substitutions hidden" aria-live="polite"></div><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
@@ -134,6 +148,6 @@
   </main>
 
   <dialog id="action-dialog"><form method="dialog" id="action-form"><div class="dialog-head"><h2 id="dialog-title">Action</h2><button type="button" value="cancel" formnovalidate class="close" aria-label="Close">×</button></div><div id="dialog-body"></div><p id="dialog-error" class="error"></p><div class="dialog-actions"><button type="button" value="cancel" formnovalidate class="secondary">Cancel</button><button id="dialog-confirm" value="default" class="primary">Confirm</button></div></form></dialog>
-  <script type="module" src="src/app.js"></script>
+  <script type="module" src="src/bootstrap.js"></script>
 </body>
 </html>
