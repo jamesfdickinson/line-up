@@ -992,8 +992,10 @@ dialog::backdrop{background:#1731267d}
   .bench-stage-toggle input[type=checkbox]{width:14px;height:14px}
 }
 /* Compact, optional game replay controls. */
-.scrub-toggle{display:grid;place-items:center;width:32px;min-width:32px;height:32px;padding:5px;border:1px solid #c9c2b5;border-radius:50%;background:#f3efe6;color:#245c41}
-.scrub-toggle svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round}
+.scrub-toggle{min-height:30px;padding:4px 7px;border:1px solid #c9c2b5;border-radius:6px;background:#f3efe6;color:#245c41;font-size:10px;font-weight:750;white-space:nowrap}
+.bench-heading{gap:6px;flex-wrap:wrap}
+.bench-heading>div:first-child{flex-wrap:wrap;gap:6px}
+@media(max-width:600px){.scrub-toggle{font-size:9px;padding:4px 5px}}
 .scrub-toggle[aria-expanded=true]{background:#dce9df;border-color:#245c41}
 .game-scrubber{display:flex;align-items:center;gap:8px;width:min(820px,100%);margin:0 auto 6px;padding:4px 8px;flex:0 0 auto;box-sizing:border-box;background:#f3efe6;border:1px solid #c9c2b5;border-radius:8px;color:#245c41;font-size:11px;font-variant-numeric:tabular-nums}
 .game-scrubber input[type=range]{flex:1;min-width:0;width:auto;height:28px;margin:0;padding:0;accent-color:#245c41;cursor:pointer}

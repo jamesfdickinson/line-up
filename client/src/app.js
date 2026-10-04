@@ -1380,7 +1380,8 @@ function renderScrubber(elapsedMs) {
   const reviewing = replayTimeMs !== null;
   $("#game-scrubber").classList.toggle("hidden", !scrubberOpen || !onField);
   $("#scrub-toggle").setAttribute("aria-expanded", String(scrubberOpen));
-  const label = `${scrubberOpen ? "Hide" : "Show"} game replay`;
+  const label = `${scrubberOpen ? "Hide" : "Show"} timeline`;
+  $("#scrub-toggle").textContent = label;
   $("#scrub-toggle").setAttribute("aria-label", label);
   $("#scrub-toggle").title = label;
   const range = $("#scrub-range");
@@ -1392,7 +1393,7 @@ function renderScrubber(elapsedMs) {
   $("#scrub-end").textContent = formatClock(elapsedMs);
   $("#scrub-live").textContent = reviewing ? "Back to live" : "Live";
   $("#scrub-live").disabled = !reviewing;
-  for (const selector of ["#live-panel .pitch-wrap", "#live-panel aside", "#undo-toast"]) $(selector).inert = reviewing;
+  for (const selector of ["#live-panel .pitch-wrap", "#bench", ".bench-stage-toggle", ".off-field-actions", "#undo-toast"]) $(selector).inert = reviewing;
   $("#live-panel").classList.toggle("replaying", reviewing);
   $("#field-scoreboard .score-row").classList.toggle("replaying", reviewing);
   for (const selector of ["#clock-button", "#match-control", "#score-for-button", "#score-against-button", "#more-actions"]) $(selector).disabled = reviewing;

@@ -92,7 +92,7 @@
         <div class="match-meta"><span id="live-status" class="live-chip">READY</span><span id="match-label"></span></div>
         <div class="score-row">
           <div class="team-score"><span id="team-name">TEAM</span><strong id="score-for">0</strong><button id="score-for-button" class="score-side-button score-side-for" type="button" aria-label="Add goal for team" title="Add goal for team">+</button></div>
-          <div class="clock-block"><div class="clock-line"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button></div><div class="clock-actions"><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button><button id="scrub-toggle" class="scrub-toggle" type="button" aria-label="Show game replay" title="Show game replay" aria-expanded="false" aria-controls="game-scrubber"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6v12M20 6v12M4 12h16M9 8v8"/></svg></button></div></div>
+          <div class="clock-block"><div class="clock-line"><button id="clock-button" class="clock" aria-label="Edit displayed game time">00:00</button><button id="half-toggle" class="half-toggle" type="button" role="switch" aria-checked="false" aria-label="Switch to second half"><span>1st</span><span>2nd</span></button></div><div class="clock-actions"><button id="match-control" class="match-control primary" type="button" aria-label="Start game" title="Start game"></button></div></div>
           <div class="team-score away"><strong id="score-against">0</strong><button id="score-against-button" class="score-side-button score-side-against" type="button" aria-label="Add goal for opponent" title="Add goal for opponent">+</button><span id="opponent-name">OPPONENT</span></div>
         </div>
       </section>
@@ -122,7 +122,7 @@
       </div>
           </section>
           <aside>
-            <div class="section-heading bench-heading"><div><h2>Bench</h2><label class="bench-stage-toggle"><input id="stage-substitutions" type="checkbox"> <span>Stage substitutions</span></label></div><div class="off-field-actions"><div id="pending-substitutions" class="pending-substitutions hidden" aria-live="polite"></div><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
+            <div class="section-heading bench-heading"><div><h2>Bench</h2><label class="bench-stage-toggle"><input id="stage-substitutions" type="checkbox"> <span>Stage substitutions</span></label><button id="scrub-toggle" class="scrub-toggle" type="button" aria-label="Show timeline" title="Show timeline" aria-expanded="false" aria-controls="game-scrubber">Show timeline</button></div><div class="off-field-actions"><div id="pending-substitutions" class="pending-substitutions hidden" aria-live="polite"></div><button id="clear-field" class="text-button clear-field">Clear field</button></div></div>
             <div id="bench" class="bench"></div>
           </aside>
         </div>
