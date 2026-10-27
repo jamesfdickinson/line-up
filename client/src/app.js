@@ -164,7 +164,6 @@ let matchId = null;
 let clock = null;
 let replayTimeMs = null;
 let scrubberOpen = false;
-let scrubberAutoEligible = false;
 let toastTimer = null;
 let selectedPlayerId = null;
 let pendingSubstitutions = [];
@@ -1318,7 +1317,6 @@ function restoreMatch() {
 function showMatch() {
   replayTimeMs = null;
   scrubberOpen = false;
-  scrubberAutoEligible = false;
   pendingSubstitutions = [];
   selectedPlayerId = null;
   window.scrollTo(0, 0);
@@ -1373,10 +1371,6 @@ function renderClockTick(elapsedMs) {
 
 function renderScrubber(elapsedMs) {
   const onField = !$("#live-panel").classList.contains("hidden");
-  const autoEligible = onField && !clock?.running && elapsedMs > 0 && replayMoments(events).length > 0;
-  // Open on entering a paused game, but let the coach hide it until the next pause.
-  if (autoEligible && !scrubberAutoEligible) scrubberOpen = true;
-  scrubberAutoEligible = autoEligible;
   const reviewing = replayTimeMs !== null;
   $("#game-scrubber").classList.toggle("hidden", !scrubberOpen || !onField);
   $("#scrub-toggle").setAttribute("aria-expanded", String(scrubberOpen));
